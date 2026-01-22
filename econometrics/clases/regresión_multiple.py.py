@@ -20,39 +20,59 @@ def print_betas(betas):
         terms.append(f"Beta {i}: {beta:.2f}")
     return ", ".join(terms)
 
-# Datos de la Encuesta Nacional de Ingresos y Gastos de los Hogares (ENIGH)
-ingreso_x1 = np.array([6, 8, 10, 12, 14]).reshape(-1, 1)
-tasa_de_interes_x2 = np.array([3, 2.5, 2, 1.5, 1]).reshape(-1, 1)
-X = np.hstack((ingreso_x1, tasa_de_interes_x2))
-consumo_y = np.array([4.9, 5.6, 6.3, 7.0, 7.6])
+
+
+# Variable dependiente: Rend_IPC (Y)
+Y = np.array([0.012, 0.008, -0.004, 0.015, 0.010, 0.006])
+
+# Variable independiente 1: Rend_TC (X1)
+X1 = np.array([0.010, 0.015, 0.020, -0.005, 0.000, 0.008])
+
+# Variable independiente 2: Tasa (%) (X2)
+X2 = np.array([7.25, 7.50, 7.75, 7.00, 7.25, 7.40])
+
+# Variable independiente 3: Volatilidad (X3)
+X3 = np.array([0.020, 0.030, 0.045, 0.018, 0.022, 0.028])
+
+X = np.column_stack((X1, X2, X3))
 
 
 
-model.fit(X, consumo_y)
-
+model.fit(X, Y)
 
 beta_0 = model.intercept_
-# Beta 1 es el consumo ante un aumento de ingreso, ceteris paribus
-# Beta 2 es el consumo ante un aumento de la tasa de interés, manteniendo ingreso constante
 
-beta_1, beta_2 = model.coef_
+beta_1, beta_2, beta_3 = model.coef_
 y_pred = model.predict(X)
-y_real = consumo_y
+y_real = Y
 mse = np.mean((y_pred - y_real) ** 2)
 
 
-recta_pred = print_linear_expression([beta_0, beta_1, beta_2])
-log.info(print_betas([beta_0, beta_1, beta_2]))
-log.info(f"Mean Squared Error: {mse:.4f}")
+recta_pred = print_linear_expression([beta_0, beta_1, beta_2, beta_3])
+log.note("Estima el modelo por MCO")
+log.info(print_betas([beta_0, beta_1, beta_2, beta_3]))
+log.info(f"Mean Squared Error: {mse:.8f}")
 log.info(f"Ecuación de la recta: {recta_pred}")
 
+log.note("¿Que interpreta el signo de cada coeficiente?")
+log.metric("Beta 1: A mayor rendimiento del tipo de cambio, mayor rendimiento del IPC.")
+log.metric("Beta 2: A mayor tasa, menor rendimiento del IPC.")
+log.metric("Beta 3: A mayor volatilidad, menor rendimiento del IPC")
 
-item = 2
 
-x_obj = X[item].reshape(1, -1)  # X=10
-y_pred_10 = model.predict(x_obj)[0]
+log.note("La variable que parece tener mayor impacto es la volatilidad ")
 
-y_obj = consumo_y[item]  # Y real para X=10 es 6.3
-residuo = y_obj - y_pred_10
 
-log.step(f"Para X={x_obj[0][0]}: Real={y_obj}, Predicho={y_pred_10:.2f}, Residuo={residuo:.2f}")
+
+
+
+
+# item = 2
+
+# x_obj = X[item].reshape(1, -1)  # X=10
+# y_pred_10 = model.predict(x_obj)[0]
+
+# y_obj = Y[item]  # Y real para X=10 es 6.3
+# residuo = y_obj - y_pred_10
+
+# log.step(f"Para X={x_obj[0][0]}: Real={y_obj}, Predicho={y_pred_10:.4f}, Residuo={residuo:.4f}")
