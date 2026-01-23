@@ -62,17 +62,8 @@ log.metric("Beta 3: A mayor volatilidad, menor rendimiento del IPC")
 
 log.note("La variable que parece tener mayor impacto es la volatilidad ")
 
+log.note("¿Esperas problemas de autocorrelación? ¿Por qué?")
+log.metric("Sí, porque los rendimientos financieros suelen mostrar autocorrelación debido a factores como tendencias del mercado y eventos económicos que afectan múltiples periodos.")
 
 
 
-
-
-# item = 2
-
-# x_obj = X[item].reshape(1, -1)  # X=10
-# y_pred_10 = model.predict(x_obj)[0]
-
-# y_obj = Y[item]  # Y real para X=10 es 6.3
-# residuo = y_obj - y_pred_10
-
-# log.step(f"Para X={x_obj[0][0]}: Real={y_obj}, Predicho={y_pred_10:.4f}, Residuo={residuo:.4f}")
