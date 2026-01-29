@@ -1,7 +1,7 @@
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
-import polars as pl
 import statsmodels.api as sm
 from colorstreak import Logger as log
 from sklearn import linear_model
@@ -71,56 +71,69 @@ def hipotesis_breusch_pagan(p_value: float):
         return "No rechazamos H0: No hay heterocedasticidad"
 
 
+def graficar_residuos(y_pred, residuals):
+    """
+    Genera un gráfico de dispersión de Residuos vs. Valores Ajustados.
+    
+    Parámetros:
+    y_pred : array-like, valores predichos por el modelo.
+    residuals : array-like, diferencia entre valores reales y predichos.
+    """
+    plt.figure(figsize=(10, 6))
+    
+    # Gráfico de dispersión
+    plt.scatter(y_pred, residuals, color='blue', alpha=0.6, edgecolors='w', s=80)
+    
+    # Línea de referencia en 0 (donde deberían estar los residuos idealmente)
+    plt.axhline(y=0, color='red', linestyle='--', linewidth=2, label='Referencia (0)')
+    
+    # Etiquetas y títulos
+    plt.title('Gráfica de Residuos vs. Valores Ajustados (Homocedasticidad)', fontsize=14)
+    plt.xlabel('Valores Ajustados (Predicciones)', fontsize=12)
+    plt.ylabel('Residuos (Errores)', fontsize=12)
+    plt.legend()
+    plt.grid(True, linestyle=':', alpha=0.6)
+    
+    # Mostrar gráfico
+    plt.show()
+
 # ======================
 
-# df = pl.read_csv(dataset_path)
+# Variable Dependiente (y): Ventas
+ventas_y = np.array([10, 13, 15, 18, 21, 30, 40, 55, 80, 110])
 
-# # Lo que hizo el profe (se hizo por que el data set n tiene la volatilidad del IPC)
-# df = df.with_columns([
-#     (pl.col("ipc") / pl.col("ipc").shift(1)).log().alias("ipc_ret"),
-#     (pl.col("fix") / pl.col("fix").shift(1)).log().alias("fix_ret")
-# ])
+# Variables Independientes (X)
+mes_x1 = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+publicidad_x2 = np.array([2, 3, 4, 5, 6, 10, 12, 15, 18, 20])
 
-# # 2. Calculamos volatilidad 
-# df = df.with_columns(
-#     pl.col("ipc_ret").rolling_std(12).alias("vol_ipc")
-# )
-# # elimibar nulos
-# df = df.drop_nulls()
+# Creación de matrices X e y para el modelo
+X = np.column_stack((publicidad_x2,)) 
 
-#log.info(df.head())
+# Si quisieras usar Mes y Publicidad como predictores, descomenta la siguiente línea:
 
-
-promedio_y = np.array([78, 82, 75, 88, 90, 85])
-
-# Variables Independientes (X1, X2, X3)
-horas_estudio_x1 = np.array([10, 12, 8, 15, 16, 14])
-asistencia_x2 = np.array([80, 85, 78, 90, 92, 88])
-horas_trabajo_x3 = np.array([20, 15, 25, 10, 8, 12])
-
-
-X = np.column_stack((horas_estudio_x1, asistencia_x2, horas_trabajo_x3))
-y = promedio_y
+y = ventas_y
 
 # ======================
 model.fit(X, y)
 
 beta_0 = model.intercept_
 
-beta_1, beta_2, beta_3 = model.coef_
-betas_list = [beta_0, beta_1, beta_2, beta_3]
+beta_1 = model.coef_[0]
+betas_list = [beta_0, beta_1]
 y_pred = model.predict(X)
 residuals = y - y_pred
 mse = np.mean(residuals ** 2)
 
-
-
-
-
 #====================== Ejercicio de clase ======================
 # Ejercicio:
 """
-Ejercicio de clase
+Estima el modelo por MCO.
+
+Aplica la prueba de Breusch–Pagan.
+
+Reporta el p-value.
+
+Concluye si hay heterocedasticidad.
 """
 
 
@@ -141,3 +154,6 @@ log.note("Prueba de White para heterocedasticidad")
 p_value_white: float = test_het_white(residuals, X)
 log.metric("p-value", f"{p_value_white:.6f}")
 log.info(hipotesis_white(p_value_white))
+
+
+graficar_residuos(y_pred, residuals)
