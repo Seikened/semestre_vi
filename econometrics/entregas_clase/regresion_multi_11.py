@@ -99,18 +99,18 @@ def graficar_residuos(y_pred, residuals):
 
 # ======================
 
-# Variable Dependiente (y): Rendimiento
-rendimiento_y = np.array([0.01, 0.015, 0.018, 0.020, 0.025, -0.10, 0.15, -0.20, 0.30, -0.40])
+# Variable Dependiente (y): Consumo
+consumo_y = np.array([3.2, 3.8, 4.1, 4.5, 5.0, 7.5, 8.9, 11.2, 13.8, 18.5])
 
-# Variable Independiente (X): Riesgo
-riesgo_x = np.array([0.5, 0.6, 0.7, 0.8, 0.9, 1.5, 1.7, 2.0, 2.3, 2.8])
+# Variable Independiente (X): Ingreso
+ingreso_x = np.array([5, 6, 7, 8, 9, 15, 18, 22, 25, 30])
 
-# (Opcional) Periodo, por si lo necesitas como referencia
-periodo = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+# (Opcional) Identificador de Hogar
+hogar = np.array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
 # Preparación de matrices para el modelo
-X = np.column_stack((riesgo_x,))
-y = rendimiento_y
+X = np.column_stack((ingreso_x,))
+y = consumo_y
 
 # ======================
 model.fit(X, y)
@@ -126,13 +126,13 @@ mse = np.mean(residuals ** 2)
 #====================== Ejercicio de clase ======================
 # Ejercicio:
 """
-Estima el modelo.
+Estima el modelo por MCO.
 
-Grafica los residuos.
+Grafica residuos vs ingreso.
 
-¿Qué sucede con la varianza del error cuando el riesgo aumenta?
+¿La dispersión del error es constante?
 
-¿Este comportamiento es típico en finanzas?
+¿Existe heterocedasticidad? Explica.
 """
 
 
@@ -149,11 +149,11 @@ p_value: float = test_breusch_pagan(residuals, X)
 log.metric("p-value", f"{p_value:.6f}")
 log.info(hipotesis_breusch_pagan(p_value))
 
-log.note(separador,"Qué sucede con la varianza del error cuando el riesgo aumenta?",separador)
-log.metric("La varianza de los errores aumenta al aumentar el riesgo")
+log.note(separador,"¿La dispersión del error es constante?",separador)
+log.metric("La varianza de el error si es constante")
 
-log.note(separador,"¿Este comportamiento es típico en finanzas?",separador)
-log.metric("Sí, es típico observar heterocedasticidad en datos financieros")
+log.note(separador,"¿Existe heterocedasticidad? Explica.",separador)
+log.metric("Si es existe heterocedasticidad, ya que el p-value es menor a 0.05")
 
 
 graficar_residuos(y_pred, residuals)
