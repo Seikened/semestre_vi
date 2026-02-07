@@ -125,10 +125,9 @@ def get_yahoo_data(symbol: str, col_name: str, start_date: str, end_date: str) -
             pl.col("Date").cast(pl.Date).alias("fecha"),
             pl.col("Close").cast(pl.Float64).alias(col_name)
         )
-        .with_columns(pl.col("fecha").dt.truncate("1mo"))
-        .group_by("fecha")
-        .agg(pl.col(col_name).mean())
         .sort("fecha")
+        .group_by_dynamic("fecha", every="1mo")
+        .agg(pl.col(col_name).mean())
     )
     return yahoo_df
 
@@ -153,11 +152,14 @@ fecha_fin = "2023-12-31"
 #inflacion, dolar_cierre = resultado_dolar
 #tiie, dolar_cierre_tiie = resultado_tiie
 
-inflacion_df = request_inflacion(fecha_inicio, fecha_fin)
-tiie_df = request_tiie(fecha_inicio, fecha_fin)
-igae_df = request_IGAE(fecha_inicio, fecha_fin)
+petroleo = get_yahoo_data('CL=F', 'Petroleo', fecha_inicio, fecha_fin )
+log.debug(petroleo)
+
+# inflacion_df = request_inflacion(fecha_inicio, fecha_fin)
+# tiie_df = request_tiie(fecha_inicio, fecha_fin)
+# igae_df = request_IGAE(fecha_inicio, fecha_fin)
 
 
-log.debug('Inflacion mensual: ', inflacion_df)
-log.debug('TIIE: ', tiie_df)
-log.debug('IGAE: ', igae_df)
+# log.debug('Inflacion mensual: ', inflacion_df)
+# log.debug('TIIE: ', tiie_df)
+# log.debug('IGAE: ', igae_df)
