@@ -1,13 +1,12 @@
 import os
 from datetime import datetime
-
 import numpy as np
 import polars as pl
 import requests
 import yfinance as yf
 from colorstreak import Logger as log
 from dotenv import load_dotenv
-
+import pathlib
 load_dotenv()
 
 
@@ -18,7 +17,6 @@ def request_banxico_data(date_start:str, date_end:str,series_id:str = "SP1") -> 
     headers = {"Bmx-Token": BANXICO_TOKEN}
 
     return requests.get(url, headers=headers)
-
 
 
 def request_inflacion(date_start:str, date_end:str,series_id:str = "SP1") -> pl.DataFrame | None:
@@ -46,52 +44,69 @@ def request_inflacion(date_start:str, date_end:str,series_id:str = "SP1") -> pl.
         log.error("Error en la API", response.status_code)
         return None
 
-def request_IGAE(date_start:str, date_end:str, series_id:str = "SR17637") -> pl.DataFrame | None:
-    d_start = datetime.strptime(date_start, "%Y-%m-%d").strftime("%Y-%m-%d")
-    d_end = datetime.strptime(date_end, "%Y-%m-%d").strftime("%Y-%m-%d")
+import polars as pl
+from datetime import datetime
+
+def extract_igae(file_path: str, date_start: str, date_end: str) -> pl.DataFrame:
+    month_map = {
+        "Ene": "01", "Feb": "02", "Mar": "03", "Abr": "04",
+        "May": "05", "Jun": "06", "Jul": "07", "Ago": "08",
+        "Sep": "09", "Oct": "10", "Nov": "11", "Dic": "12"
+    }
+    df = pl.read_csv(file_path, skip_rows=17, encoding="latin-1")
     
-    response = request_banxico_data(d_start, d_end, series_id)
-    if response.status_code == 200:
-        data = response.json()['bmx']['series'][0]['datos']
-        
-        banxico_df = (
-            pl.DataFrame(data)
-            .with_columns(
-                pl.col("fecha").str.to_date("%d/%m/%Y"),
-                pl.col("dato").str.replace_all(",", "").cast(pl.Float64).alias("indice")
-            )
-            .sort("fecha")
-            .with_columns(
-                ((pl.col("indice") / pl.col("indice").shift(1)) - 1).alias("igae_crecimiento")
-            )
-            .drop_nulls()
+    df_clean = (
+        df.rename({df.columns[1]: "indice"})
+        .with_columns(
+            pl.col("Fecha").str.split_exact(" ", 1).struct.rename_fields(["mes_es", "year"])
         )
-        return banxico_df.select(["fecha", "igae_crecimiento"]).drop_nulls()
-    else:
-        log.error("Error en la API", response.status_code)
-        return None
+        .unnest("Fecha")
+        .with_columns(
+            pl.col("mes_es").replace(month_map).alias("mes_num")
+        )
+        .with_columns(
+            pl.format("{}-{}-01", pl.col("year"), pl.col("mes_num"))
+            .str.to_date("%Y-%m-%d")
+            .alias("fecha")
+        )
+        .select(["fecha", "indice"])
+        .sort("fecha")
+    )
+    d_start = datetime.strptime(date_start, "%Y-%m-%d").date()
+    d_end = datetime.strptime(date_end, "%Y-%m-%d").date()
+
+    df_filtered = df_clean.filter(
+        (pl.col("fecha") >= d_start) & (pl.col("fecha") <= d_end)
+    )
+    df_final = df_filtered.with_columns(
+        (((pl.col("indice") / pl.col("indice").shift(1)) - 1) * 100).alias("igae_crecimiento")
+    ).drop_nulls()
+
+    return df_final.select(["fecha", "igae_crecimiento"])
+
     
-def request_fix(date_start:str, date_end:str, series_id:str = "SF43718") -> pl.DataFrame | None:
-    d_start = datetime.strptime(date_start, "%Y-%m-%d").strftime("%Y-%m-%d")
-    d_end = datetime.strptime(date_end, "%Y-%m-%d").strftime("%Y-%m-%d")
+def request_fix(date_start: str, date_end: str, series_id: str = "SF43718") -> pl.DataFrame | None:
+    response = request_banxico_data(date_start, date_end, series_id)
     
-    response = request_banxico_data(d_start, d_end, series_id)
     if response.status_code == 200:
         data = response.json()['bmx']['series'][0]['datos']
         
-        banxico_df = (
+        df_mensual = (
             pl.DataFrame(data)
             .with_columns(
                 pl.col("fecha").str.to_date("%d/%m/%Y"),
                 pl.col("dato").str.replace_all(",", "").cast(pl.Float64).alias("fix")
             )
             .sort("fecha")
-            .drop_nulls()
+            .with_columns(pl.col("fecha").dt.truncate("1mo"))
+            .group_by("fecha")
+            .agg(pl.col("fix").mean().alias("fix_promedio"))
+            .sort("fecha")
         )
-        return banxico_df.select(["fecha", "fix"]).drop_nulls()
+        return df_mensual
     else:
-        log.error("Error en la API", response.status_code)
-        return None    
+        log.error(f"Error en la API: {response.status_code}")
+        return None  
 
 def request_tiie(date_start: str, date_end: str, series_id: str = "SF60648") -> pl.DataFrame | None:
     response = request_banxico_data(date_start, date_end, series_id)
@@ -144,20 +159,21 @@ def compare_with(fecha_inicio:str, fecha_fin:str, symbol :str, col_name:str, ser
         return (inflacion, symbol_values)
     return None
 
-# ============= Ejemplo de uso =============
-fecha_inicio = "2020-01-01"
-fecha_fin = "2023-12-31"
-
-#resultado_dolar = compare_with(fecha_inicio, fecha_fin, "USDMXN=X", "dolar_cierre")
-#resultado_tiie = compare_with(fecha_inicio, fecha_fin, "CL=F", "dolar_cierre", series_id="SF60648")
-#inflacion, dolar_cierre = resultado_dolar
-#tiie, dolar_cierre_tiie = resultado_tiie
+# ============= Pre-choque =============
+path = pathlib.Path(__file__).parent.resolve()
+fecha_inicio = "2015-01-01"
+fecha_fin = "2019-12-31"
 
 inflacion_df = request_inflacion(fecha_inicio, fecha_fin)
 tiie_df = request_tiie(fecha_inicio, fecha_fin)
-igae_df = request_IGAE(fecha_inicio, fecha_fin)
+igae_df = extract_igae(path / "igae_datos.csv", fecha_inicio, fecha_fin)
+fix_df = request_fix(fecha_inicio, fecha_fin)
 
 
-log.debug('Inflacion mensual: ', inflacion_df)
-log.debug('TIIE: ', tiie_df)
-log.debug('IGAE: ', igae_df)
+df_regression = (
+    inflacion_df
+    .join(tiie_df, on="fecha", how="inner")
+    .join(igae_df, on="fecha", how="inner")
+    .join(fix_df, on="fecha", how="inner")
+)
+
