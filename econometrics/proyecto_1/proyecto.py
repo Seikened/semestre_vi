@@ -144,16 +144,18 @@ def compare_with(fecha_inicio:str, fecha_fin:str, symbol :str, col_name:str, ser
     return None
 
 # ============= Ejemplo de uso =============
-fecha_inicio = "2020-01-01"
-fecha_fin = "2023-12-31"
+fecha_inicio = "2015-01-01"
+fecha_fin = "2019-12-31"
 
 #resultado_dolar = compare_with(fecha_inicio, fecha_fin, "USDMXN=X", "dolar_cierre")
 #resultado_tiie = compare_with(fecha_inicio, fecha_fin, "CL=F", "dolar_cierre", series_id="SF60648")
 #inflacion, dolar_cierre = resultado_dolar
 #tiie, dolar_cierre_tiie = resultado_tiie
 
-petroleo = get_yahoo_data('CL=F', 'Petroleo', fecha_inicio, fecha_fin )
-log.debug(petroleo)
+
+
+def get_petroleo( fecha_inicio, fecha_fin, symbol='CL=F', col_name='Petroleo' ):
+    return get_yahoo_data(symbol, col_name, fecha_inicio, fecha_fin)
 
 # inflacion_df = request_inflacion(fecha_inicio, fecha_fin)
 # tiie_df = request_tiie(fecha_inicio, fecha_fin)
