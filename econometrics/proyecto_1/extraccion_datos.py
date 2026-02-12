@@ -8,6 +8,7 @@ from colorstreak import Logger as log
 from dotenv import load_dotenv
 import pathlib
 from proyecto import get_petroleo
+import pandas as pd
 
 load_dotenv()
 
@@ -46,8 +47,6 @@ def request_inflacion(date_start:str, date_end:str,series_id:str = "SP1") -> pl.
         log.error("Error en la API", response.status_code)
         return None
 
-import polars as pl
-from datetime import datetime
 
 def extract_igae(file_path: str, date_start: str, date_end: str) -> pl.DataFrame:
     month_map = {

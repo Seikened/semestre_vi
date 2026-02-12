@@ -16,19 +16,18 @@ class AnalisisEconometrico:
     """
 
     @staticmethod
-    def estimar_mco(X: np.ndarray, y: np.ndarray, feature_names: list = None):
+    def estimar_mco(X: np.ndarray, y: np.ndarray, feature_names: list = None, verbose: bool = False):
         """
         Ejecuta una regresión por Mínimos Cuadrados Ordinarios (MCO/OLS).
         Retorna el modelo ajustado y la matriz X con constante añadida.
         """
         # Añadir constante (intercepto) explícitamente, statsmodels no lo hace solo
         X_con_constante = sm.add_constant(X)
-        
         modelo = sm.OLS(y, X_con_constante).fit()
         
         # Imprimir resumen académico
-        print(modelo.summary(xname=['Intercepto'] + feature_names if feature_names else None))
-        
+        if verbose:
+            print(modelo.summary(xname=['Intercepto'] + feature_names if feature_names else None))
         return modelo, X_con_constante
 
     @staticmethod
