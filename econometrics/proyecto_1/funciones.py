@@ -76,10 +76,8 @@ class AnalisisEconometrico:
             print("  -> No aplica (Se requiere más de 1 variable independiente)")
             return
             
-        # Añadir constante para cálculo correcto
         X_const = sm.add_constant(X)
         
-        # Iterar desde 1 para saltar la constante (intercepto)
         for i in range(1, X_const.shape[1]):
             val = variance_inflation_factor(X_const, i)
             name = feature_names[i-1] if feature_names else f"Var {i}"

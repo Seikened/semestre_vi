@@ -191,6 +191,12 @@ petroleo_pre = df_regression_prechoque.select('Petroleo').to_numpy()
 fecha_inicio = "2020-01-01"
 fecha_fin = "2023-12-31"
 
+inflacion_df = request_inflacion(fecha_inicio, fecha_fin)
+tiie_df = request_tiie(fecha_inicio, fecha_fin)
+igae_df = extract_igae(path / "igae_datos.csv", fecha_inicio, fecha_fin)
+fix_df = request_fix(fecha_inicio, fecha_fin)
+petroleo = get_petroleo(fecha_inicio, fecha_fin)
+
 df_regression_postchoque = (
     inflacion_df
     .join(tiie_df, on="fecha", how="inner")
