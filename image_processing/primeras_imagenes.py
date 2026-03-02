@@ -7,6 +7,16 @@ from PIL import Image
 from torchvision.transforms import v2
 
 
+
+# ==========================================
+# Helper
+# ==========================================
+def get_image_path(name) -> Path:
+    data_path = Path(__file__).parent / "data"
+    return data_path / name
+# ==========================================
+#  VisionNode
+# ==========================================
 class VisionNode:
     """
     Representación inmutable de un tensor de imagen.
@@ -99,12 +109,12 @@ class VisionNode:
 
 
 if __name__ == "__main__":
-    data_path = Path(__file__).parent / "data"
-    mi_imagen = data_path / "golf.BMP"
+    
 
     try:
         # 1. Instanciamos directamente desde el archivo
-        img = VisionNode.from_file(mi_imagen)
+        mi_imagen_path = get_image_path("toraxP2.bmp")
+        img = VisionNode.from_file(mi_imagen_path)
         log.debug(f"[{img.title}] {img.width}x{img.height} cargada en {img.tensor.device}.")
 
         # 2. Uso Fluido y Minimalista:
