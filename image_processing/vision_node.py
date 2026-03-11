@@ -1,0 +1,312 @@
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import torch
+from colorstreak import Logger as log
+from typing import Self
+
+from PIL import Image
+from torchvision.transforms import v2
+
+"""
+Módulo de Procesamiento de Imágenes
+Contiene la clase VisionNode para manipulación fluida de tensores de imagen.
+"""
+
+# ==========================================
+# Helpers
+# ==========================================
+def get_image_path(name: str) -> Path:
+    """Obtiene la ruta a una imagen en la carpeta de datos por defecto."""
+    data_path = Path(__file__).parent / "data"
+    return data_path / name
+
+
+# ==========================================
+# VisionNode
+# ==========================================
+class VisionNode:
+    """
+    Representación inmutable de un tensor de imagen.
+    Cada operación devuelve un nuevo VisionNode, permitiendo encadenar métodos (Fluent API).
+    """
+    def __init__(self, tensor: torch.Tensor, title: str = "Imagen"):
+        self.tensor = tensor
+        self.title = title
+        self.channels, self.height, self.width = self.tensor.shape
+        self.is_grayscale = (self.channels == 1)
+
+    @classmethod
+    def from_file(cls, path: Path) -> Self:
+        """Factory method para instanciar directamente desde una ruta."""
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        img_raw = Image.open(path).convert("RGB")
+        
+        transform = v2.Compose([
+            v2.ToImage(),
+            v2.ToDtype(torch.float32, scale=True)
+        ])
+        
+        tensor_rgb = transform(img_raw).to(device)
+        return cls(tensor_rgb, title=path.name)
+
+    # ==========================================
+    # MÉTODOS DE TRANSFORMACIÓN (Devuelven VisionNode)
+    # ==========================================
+
+    def to_negative(self) -> Self:
+        """Invierte los valores del tensor matemáticamente."""
+        tensor_neg = 1.0 - self.tensor
+        return self.__class__(tensor_neg, title=f"Negativo de {self.title}")
+
+    def to_grayscale(self) -> Self:
+        """Convierte a blanco y negro colapsando los canales RGB."""
+        tensor_bn = torch.mean(self.tensor, dim=0, keepdim=True)
+        return self.__class__(tensor_bn, title=f"B/N de {self.title}")
+
+    def split_channels(self) -> dict[str, Self]:
+        """Separa la imagen en sus 3 canales base como nodos independientes."""
+        if self.is_grayscale:
+            raise ValueError("No se pueden separar canales de una imagen en blanco y negro.")
+            
+        return {
+            "Rojo": self.__class__(self.tensor[0:1, :, :], title="Canal Rojo"),
+            "Verde": self.__class__(self.tensor[1:2, :, :], title="Canal Verde"),
+            "Azul": self.__class__(self.tensor[2:3, :, :], title="Canal Azul")
+        }
+    
+    def multiplier(self, factor: float) -> Self:
+        """Aplica un factor de multiplicación al tensor forzando los límites [0, 1]."""
+        tensor_mult = torch.clamp(self.tensor * factor, min=0.0, max=1.0)
+        return self.__class__(tensor_mult, title=f"x{factor} ({self.title})")
+    
+    def contrast_stretch(self) -> Self:
+        """
+        Expande el rango de píxeles para que ocupen todo el espectro [0.0, 1.0].
+        Ideal cuando los valores de los píxeles están muy agrupados (poco contraste).
+        También conocido como Normalización Min-Max.
+        """
+        min_val = torch.min(self.tensor)
+        max_val = torch.max(self.tensor)
+        
+        # Prevenir división por cero si la imagen es de un solo color
+        if max_val == min_val:
+            return self.__class__(self.tensor.clone(), title=f"Estirado de {self.title}")
+            
+        tensor_stretched = (self.tensor - min_val) / (max_val - min_val)
+        return self.__class__(tensor_stretched, title=f"Estirado de {self.title}")
+
+    # ==========================================
+    # MÉTODOS DE BINARIZACIÓN (Estrategias)
+    # ==========================================
+
+    def binarize(self, threshold: float = 0.5) -> Self:
+        """MODO BRUTO (Global Threshold)."""
+        tensor_bin = (self.tensor > threshold).float()
+        return self.__class__(tensor_bin, title=f"Bin (th={threshold})")
+
+    def binarize_range(self, lower: float, upper: float) -> Self:
+        """MODO RANGO (Bandpass / InRange)."""
+        tensor_bin = ((self.tensor >= lower) & (self.tensor <= upper)).float()
+        return self.__class__(tensor_bin, title=f"Bin Rango [{lower}-{upper}]")
+
+    def binarize_adaptive(self, kernel_size: int = 15, c: float = 0.05) -> Self:
+        """MODO INDUSTRIA (Adaptive Thresholding con Kernel)."""
+        import torch.nn.functional as F
+        
+        pad = kernel_size // 2
+        tensor_padded = F.pad(self.tensor.unsqueeze(0), (pad, pad, pad, pad), mode='reflect')
+        local_mean = F.avg_pool2d(tensor_padded, kernel_size, stride=1).squeeze(0)
+        tensor_bin = (self.tensor > (local_mean - c)).float()
+        
+        return self.__class__(tensor_bin, title=f"Bin Adaptativo (k={kernel_size})")
+
+    # ==========================================
+    # MÉTODOS AVANZADOS
+    # ==========================================
+
+    def log_transform(self) -> Self:
+        """Transformación logarítmica. Aclara zonas oscuras."""
+        device = self.tensor.device
+        tensor_255 = self.tensor * 255.0
+        denominador = torch.log(torch.tensor(256.0, device=device))
+        tensor_log = torch.log1p(tensor_255) / denominador
+        return self.__class__(tensor_log, title=f"Log Transform de {self.title}")
+    
+    def gamma_transform(self, gamma: float) -> Self:
+        """Transformación exponencial (Gamma Correction)."""
+        tensor_gamma = torch.pow(self.tensor, gamma)
+        return self.__class__(tensor_gamma, title=f"Gamma (g={gamma})")
+    
+    def bits(self, n_bits: int = 8) -> Self:
+        """Cuantización reduciendo el número de bits por canal."""
+        levels = 2 ** n_bits
+        tensor_quant = torch.floor(self.tensor * (levels - 1)) / (levels - 1)
+        return self.__class__(tensor_quant, title=f"Cuantizado ({n_bits} bits)")
+        
+    def pseudo_color_infrared(self, cmap_name: str = "inferno") -> Self:
+        """Aplica un mapa de color simulando una cámara infrarroja (térmica)."""
+        import matplotlib.cm as cm
+        import numpy as np
+        
+        base = self if self.is_grayscale else self.to_grayscale()
+        base_np = base.tensor.squeeze(0).cpu().numpy()
+        
+        try:
+            cmap = cm.get_cmap(cmap_name)
+        except AttributeError:
+            import matplotlib as mpl
+            cmap = mpl.colormaps[cmap_name]
+            
+        colored_rgba = cmap(base_np)
+        tensor_rgb = torch.tensor(
+            colored_rgba[..., :3], 
+            dtype=torch.float32, 
+            device=self.tensor.device
+        ).permute(2, 0, 1)
+        
+        return self.__class__(tensor_rgb, title=f"Infrarrojo Térmico ({cmap_name})")
+        
+    def false_color_infrared(self) -> Self:
+        """Simula película Infrarroja a color (estilo Kodak Aerochrome)."""
+        if self.is_grayscale:
+            raise ValueError("El infrarrojo falso color requiere una imagen RGB.")
+            
+        r = self.tensor[0:1, :, :]
+        g = self.tensor[1:2, :, :]
+        b = self.tensor[2:3, :, :]
+        
+        ir_tensor = torch.cat([g, r, b], dim=0)
+        return self.__class__(ir_tensor, title=f"Infrarrojo Aerochrome de {self.title}")
+    
+    # ==========================================
+    # MÉTODOS DE VISUALIZACIÓN
+    # ==========================================
+
+    def show_diferences(self, compare_to: "VisionNode", magnifier: float = 1.0, block: bool = True) -> Self:
+        """Calcula y muestra el mapa de error absoluto entre dos nodos."""
+        if self.tensor.shape != compare_to.tensor.shape:
+            raise ValueError(f"Incompatibilidad de dimensiones: {self.tensor.shape} vs {compare_to.tensor.shape}")
+        
+        tensor_diff = torch.abs(self.tensor - compare_to.tensor) 
+        tensor_diff = torch.clamp(tensor_diff * magnifier, min=0.0, max=1.0) 
+        title = f"Diferencias: {self.title} vs {compare_to.title}"
+        return self.__class__(tensor_diff, title=title).show(block=block)
+    
+    def show(self, block: bool = True) -> Self:
+        """Renderiza el nodo actual."""
+        img_disp = self.tensor.permute(1, 2, 0).cpu().squeeze().numpy()
+        cmap = "gray" if self.is_grayscale else None
+        
+        fig = plt.figure(figsize=(6, 6))
+        plt.imshow(img_disp, cmap=cmap, vmin=0, vmax=1)
+        plt.title(self.title)
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show(block=block)
+        return self
+    
+    def histogram(self, block: bool = True) -> Self:
+        """Calcula y muestra el histograma del nodo en escala logarítmica."""
+        import numpy as np
+        
+        if self.is_grayscale:
+            fig, axes = plt.subplots(1, 1, figsize=(8, 4))
+            axes = [axes]
+            canales = [("B/N", "black", self.tensor[0])]
+        else:
+            fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+            canales = [
+                ("Rojo", "red", self.tensor[0]),
+                ("Verde", "green", self.tensor[1]),
+                ("Azul", "blue", self.tensor[2])
+            ]
+
+        for ax, (nombre, color, tensor_canal) in zip(axes, canales):
+            datos_255 = tensor_canal.cpu().numpy().flatten() * 255.0
+            counts, bin_edges = np.histogram(datos_255, bins=256, range=(0, 256))
+            bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+            
+            ax.plot(bin_centers, counts, color=color, lw=1.5)
+            ax.fill_between(bin_centers, counts, color=color, alpha=0.2)
+            ax.axvline(x=255, color='red', linestyle='--', alpha=0.6, label='Saturación')
+            ax.set_yscale('log', nonpositive='clip')
+            
+            ax.set_title(f"Canal {nombre}", fontsize=12)
+            ax.set_xlim(-5, 260) 
+            ax.set_xlabel("Intensidad [0 - 255]")
+            ax.set_ylabel("Píxeles (Log)")
+            ax.grid(True, linestyle=':', alpha=0.4)
+            ax.legend(loc="upper right")
+
+        fig.suptitle(f"Análisis de Histograma (Log): {self.title}", fontsize=14, weight='bold', y=1.05)
+        plt.tight_layout()
+        plt.show(block=block)
+        return self
+
+    def show_report(self, multiplier: float = 1.0):
+        """Renderiza un reporte comparativo entre la imagen original y sus canales."""
+        if self.is_grayscale:
+            log.warning("El reporte comparativo requiere una imagen RGB.")
+            return
+
+        canales = self.split_channels()
+        bn_node = self.to_grayscale(multiplier)
+        
+        nodos_a_graficar = [self] + list(canales.values()) + [bn_node]
+        fig, axes = plt.subplots(1, len(nodos_a_graficar), figsize=(20, 5))
+        
+        for ax, nodo in zip(axes, nodos_a_graficar):
+            img_disp = nodo.tensor.permute(1, 2, 0).cpu().squeeze().numpy()
+            cmap = "gray" if nodo.is_grayscale else None
+            
+            ax.imshow(img_disp, cmap=cmap, vmin=0, vmax=1)
+            ax.set_title(nodo.title)
+            ax.axis("off")
+            
+        plt.tight_layout()
+        plt.show()
+
+
+# ==========================================
+# Pruebas / Demo
+# ==========================================
+def demo_pipeline():
+    """Ejecuta un pequeño demo usando imágenes de muestra si están disponibles."""
+    try:
+        fotos = {
+            "torax": get_image_path("toraxP2.bmp"),
+            "arco": get_image_path("arco1.bmp"),
+            "tumba": get_image_path("nd5.bmp"),
+            "fondo": get_image_path("fondo_negro.jpeg"),
+            "ventana": get_image_path("louvre4.bmp"),
+            "taller": get_image_path("taller1.jpg"),
+            "infra": get_image_path("infrarrojo/arteriesMIR.jpg"),
+        }
+        
+        mi_imagen_path = fotos.get("infra")
+        if not mi_imagen_path or not mi_imagen_path.exists():
+            log.warning("No se encontró la imagen de prueba para el demo.")
+            return
+
+        img_original = VisionNode.from_file(mi_imagen_path)
+        img_original.show(block=False) 
+
+        # Pipeline de transformaciones
+        img_expo = img_original.gamma_transform(0.5)
+        img_expo.show(block=False)
+        
+        img_estirada = img_original.contrast_stretch()
+        img_estirada.show(block=False)
+
+        img_ir_termica = img_original.pseudo_color_infrared()
+        img_ir_termica.show(block=False)   
+        
+        log.info("Demo finalizado. Esperando a que se cierren las ventanas...")
+        plt.show()
+        
+    except Exception as e:
+        log.error(f"Error en la ejecución del demo: {e}")
+
+if __name__ == "__main__":
+    demo_pipeline()
