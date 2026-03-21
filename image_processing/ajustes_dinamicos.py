@@ -1,18 +1,20 @@
 import os
 import sys
+from typing import Self
+
+import matplotlib.pyplot as plt
+import torch
+from colorstreak import Logger as log
+
+# Importamos la clase base que modificamos previamente para soportar herencia fluida
+from image_processing.vision_node import VisionNode, get_image_path
 
 # Ensure the project root is in sys.path so direct executions can find the 'image_processing' module
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-import matplotlib.pyplot as plt
-import torch
-from typing import Self
-from colorstreak import Logger as log
 
-# Importamos la clase base que modificamos previamente para soportar herencia fluida
-from image_processing.vision_node import VisionNode, get_image_path
 
 """
 Módulo: Ajustes Dinámicos y Ecualización
@@ -39,7 +41,7 @@ class DynamicVisionNode(VisionNode):
         """
         return cls(node.tensor.clone(), title=node.title)
 
-    def piecewise_linear_transform(self, x_points: tuple, y_points: tuple) -> Self:
+    def linear_transform(self, x_points: tuple, y_points: tuple) -> Self:
         """
         TEMA: Ajustes Dinámicos (Transformación a Tramos)
         
@@ -152,7 +154,7 @@ class DynamicVisionNode(VisionNode):
             
             result_tensor[c] = equalized_channel
             
-        return self.__class__(result_tensor, title=f"Ecualizado ({self.title})")
+        return self.__class__(result_tensor, title=f"Ecualizado de {self.title}")
 
 
 
@@ -186,8 +188,8 @@ def demo_ajustes_dinamicos():
         
         # 3. Aplicamos Ajuste Dinámico (Mejorar negros)
         # Puntos: (0, 100, 157, 255) -> (0, 0, 255, 255)
-        x_pts = (0, 100, 157, 255)
-        y_pts = (0, 0, 255, 255)
+        #x_pts = (0, 100, 157, 255)
+        #y_pts = (0, 0, 255, 255)
         
         
         

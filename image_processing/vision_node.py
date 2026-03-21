@@ -78,7 +78,7 @@ class VisionNode:
     def multiplier(self, factor: float) -> Self:
         """Aplica un factor de multiplicación al tensor forzando los límites [0, 1]."""
         tensor_mult = torch.clamp(self.tensor * factor, min=0.0, max=1.0)
-        return self.__class__(tensor_mult, title=f"x{factor} ({self.title})")
+        return self.__class__(tensor_mult, title=f"x{factor} de {self.title}")
     
     def contrast_stretch(self) -> Self:
         """
@@ -103,23 +103,23 @@ class VisionNode:
     def binarize(self, threshold: float = 0.5) -> Self:
         """MODO BRUTO (Global Threshold)."""
         tensor_bin = (self.tensor > threshold).float()
-        return self.__class__(tensor_bin, title=f"Bin (th={threshold})")
+        return self.__class__(tensor_bin, title=f"Bin (th={threshold}) de {self.title}")
 
     def binarize_range(self, lower: float, upper: float) -> Self:
         """MODO RANGO (Bandpass / InRange)."""
         tensor_bin = ((self.tensor >= lower) & (self.tensor <= upper)).float()
-        return self.__class__(tensor_bin, title=f"Bin Rango [{lower}-{upper}]")
+        return self.__class__(tensor_bin, title=f"Bin Rango [{lower}-{upper}] de {self.title}")
 
     def binarize_adaptive(self, kernel_size: int = 15, c: float = 0.05) -> Self:
         """MODO INDUSTRIA (Adaptive Thresholding con Kernel)."""
         import torch.nn.functional as F
-        
+
         pad = kernel_size // 2
         tensor_padded = F.pad(self.tensor.unsqueeze(0), (pad, pad, pad, pad), mode='reflect')
         local_mean = F.avg_pool2d(tensor_padded, kernel_size, stride=1).squeeze(0)
         tensor_bin = (self.tensor > (local_mean - c)).float()
-        
-        return self.__class__(tensor_bin, title=f"Bin Adaptativo (k={kernel_size})")
+
+        return self.__class__(tensor_bin, title=f"Bin Adaptativo (k={kernel_size}) de {self.title}")
 
     # ==========================================
     # MÉTODOS AVANZADOS
@@ -136,13 +136,13 @@ class VisionNode:
     def gamma_transform(self, gamma: float) -> Self:
         """Transformación exponencial (Gamma Correction)."""
         tensor_gamma = torch.pow(self.tensor, gamma)
-        return self.__class__(tensor_gamma, title=f"Gamma (g={gamma})")
-    
+        return self.__class__(tensor_gamma, title=f"Gamma (g={gamma}) de {self.title}")
+
     def bits(self, n_bits: int = 8) -> Self:
         """Cuantización reduciendo el número de bits por canal."""
         levels = 2 ** n_bits
         tensor_quant = torch.floor(self.tensor * (levels - 1)) / (levels - 1)
-        return self.__class__(tensor_quant, title=f"Cuantizado ({n_bits} bits)")
+        return self.__class__(tensor_quant, title=f"Cuantizado ({n_bits} bits) de {self.title}")
         
     def pseudo_color_infrared(self, cmap_name: str = "inferno") -> Self:
         """Aplica un mapa de color simulando una cámara infrarroja (térmica)."""
@@ -165,7 +165,7 @@ class VisionNode:
             device=self.tensor.device
         ).permute(2, 0, 1)
         
-        return self.__class__(tensor_rgb, title=f"Infrarrojo Térmico ({cmap_name})")
+        return self.__class__(tensor_rgb, title=f"Infrarrojo Térmico ({cmap_name}) de {self.title}")
         
     def false_color_infrared(self) -> Self:
         """Simula película Infrarroja a color (estilo Kodak Aerochrome)."""
@@ -207,40 +207,60 @@ class VisionNode:
         return self
     
     def histogram(self, block: bool = True) -> Self:
-        """Calcula y muestra el histograma del nodo en escala logarítmica."""
+        """Calcula y muestra el histograma del nodo en escala logarítmica.
+
+        Layout:
+        - Color:    cuadrícula 2x2 → imagen | R
+                                             G   | B
+        - Escala de grises: cuadrícula 1x2 → imagen | B/N
+        """
         import numpy as np
-        
+
+        img_disp = self.tensor.permute(1, 2, 0).cpu().squeeze().numpy()
+        cmap_img = "gray" if self.is_grayscale else None
+
         if self.is_grayscale:
-            fig, axes = plt.subplots(1, 1, figsize=(8, 4))
-            axes = [axes]
+            fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+            ax_img = axes[0]
+            hist_axes = [axes[1]]
             canales = [("B/N", "black", self.tensor[0])]
         else:
-            fig, axes = plt.subplots(1, 3, figsize=(18, 4))
+            fig = plt.figure(figsize=(12, 8))
+            ax_img  = fig.add_subplot(2, 2, 1)
+            ax_r    = fig.add_subplot(2, 2, 2)
+            ax_g    = fig.add_subplot(2, 2, 3)
+            ax_b    = fig.add_subplot(2, 2, 4)
+            hist_axes = [ax_r, ax_g, ax_b]
             canales = [
-                ("Rojo", "red", self.tensor[0]),
+                ("Rojo",  "red",   self.tensor[0]),
                 ("Verde", "green", self.tensor[1]),
-                ("Azul", "blue", self.tensor[2])
+                ("Azul",  "blue",  self.tensor[2]),
             ]
 
-        for ax, (nombre, color, tensor_canal) in zip(axes, canales):
+        # Imagen en el primer cuadrante
+        ax_img.imshow(img_disp, cmap=cmap_img, vmin=0, vmax=1)
+        ax_img.set_title(self.title, fontsize=11)
+        ax_img.axis("off")
+
+        # Histogramas
+        for ax, (nombre, color, tensor_canal) in zip(hist_axes, canales):
             datos_255 = tensor_canal.cpu().numpy().flatten() * 255.0
             counts, bin_edges = np.histogram(datos_255, bins=256, range=(0, 256))
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-            
+
             ax.plot(bin_centers, counts, color=color, lw=1.5)
             ax.fill_between(bin_centers, counts, color=color, alpha=0.2)
             ax.axvline(x=255, color='red', linestyle='--', alpha=0.6, label='Saturación')
             ax.set_yscale('log', nonpositive='clip')
-            
-            ax.set_title(f"Canal {nombre}", fontsize=12)
-            ax.set_xlim(-5, 260) 
+            ax.set_title(f"Canal {nombre}", fontsize=11)
+            ax.set_xlim(-5, 260)
             ax.set_xlabel("Intensidad [0 - 255]")
             ax.set_ylabel("Píxeles (Log)")
             ax.grid(True, linestyle=':', alpha=0.4)
             ax.legend(loc="upper right")
 
-        fig.suptitle(f"Análisis de Histograma (Log): {self.title}", fontsize=14, weight='bold', y=1.05)
-        plt.tight_layout()
+        fig.suptitle(f"Histograma: {self.title}", fontsize=13, weight='bold')
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
         plt.show(block=block)
         return self
 
