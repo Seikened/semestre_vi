@@ -110,7 +110,7 @@ class DynamicVisionNode(VisionNode):
             plt.tight_layout()
             plt.show(block=False)
 
-        return self.__class__(result_tensor, title=f"Ajuste Dinámico de {self.title}")
+        return self.__class__(result_tensor, title=f"T(r→s) lineal por tramos de {self.title}")
 
     
 
