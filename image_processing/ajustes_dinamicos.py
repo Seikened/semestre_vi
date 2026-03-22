@@ -41,47 +41,49 @@ class DynamicVisionNode(VisionNode):
         """
         return cls(node.tensor.clone(), title=node.title)
 
-    def linear_transform(self, x_points: tuple, y_points: tuple, show_transform: bool = False) -> Self:
+    def linear_transform(self, entrada: tuple, salida: tuple, show_transform: bool = False) -> Self:
         """
         TEMA: Ajustes Dinámicos (Transformación a Tramos)
 
-        Aplica una transformación lineal usando puntos de control.
+        Aplica una transformación lineal por tramos usando puntos de control.
         Ejemplo para mejorar negros:
-            x_points = (0, 100, 157, 255)
-            y_points = (0,   0, 255, 255)
+            entrada = (0, 100, 157, 255)   # intensidades de entrada r
+            salida  = (0,   0, 255, 255)   # intensidades de salida  s = T(r)
 
         Esto obliga a todos los píxeles menores a 100 a ser negros puros (0),
         expande los valores de 100 a 157 para que ocupen todo el rango de 0 a 255,
         y hace blancos puros (255) a todos los que sean mayores a 157.
 
         Args:
+            entrada:        Intensidades de entrada r (escala 0-255), define los tramos.
+            salida:         Intensidades de salida s = T(r) (escala 0-255).
             show_transform: Si True, grafica la curva T(r→s) con los puntos de control.
         """
         device = self.tensor.device
         # Convertimos los puntos de escala 0-255 a la escala interna 0.0-1.0
-        x_norm = torch.tensor(x_points, dtype=torch.float32, device=device) / 255.0
-        y_norm = torch.tensor(y_points, dtype=torch.float32, device=device) / 255.0
+        r_norm = torch.tensor(entrada, dtype=torch.float32, device=device) / 255.0
+        s_norm = torch.tensor(salida,  dtype=torch.float32, device=device) / 255.0
 
         result_tensor = torch.zeros_like(self.tensor)
 
         # Iteramos sobre los segmentos definidos por los puntos (ej: 0-100, 100-157, 157-255)
-        for i in range(len(x_norm) - 1):
-            x0, x1 = x_norm[i], x_norm[i+1]
-            y0, y1 = y_norm[i], y_norm[i+1]
+        for i in range(len(r_norm) - 1):
+            r0, r1 = r_norm[i], r_norm[i+1]
+            s0, s1 = s_norm[i], s_norm[i+1]
 
-            # Máscara para aislar los píxeles que caen en este rango [x0, x1)
+            # Máscara para aislar los píxeles que caen en este rango [r0, r1)
             # En el último segmento incluimos también los valores mayores o iguales para no dejar píxeles sueltos
-            if i == len(x_norm) - 2:
-                mask = (self.tensor >= x0)
+            if i == len(r_norm) - 2:
+                mask = (self.tensor >= r0)
             else:
-                mask = (self.tensor >= x0) & (self.tensor < x1)
+                mask = (self.tensor >= r0) & (self.tensor < r1)
 
-            if x0 == x1:
-                result_tensor[mask] = y0
+            if r0 == r1:
+                result_tensor[mask] = s0
             else:
-                # Interpolación de la recta: y = y0 + (x - x0) * (y1 - y0) / (x1 - x0)
-                slope = (y1 - y0) / (x1 - x0)
-                result_tensor[mask] = y0 + (self.tensor[mask] - x0) * slope
+                # Interpolación de la recta: s = s0 + (r - r0) * (s1 - s0) / (r1 - r0)
+                slope = (s1 - s0) / (r1 - r0)
+                result_tensor[mask] = s0 + (self.tensor[mask] - r0) * slope
 
         # Aseguramos que nada se salga del límite [0.0, 1.0]
         result_tensor = torch.clamp(result_tensor, 0.0, 1.0)
@@ -91,10 +93,10 @@ class DynamicVisionNode(VisionNode):
             # Línea identidad de referencia
             ax.plot([0, 255], [0, 255], color="gray", linestyle="--", lw=1, label="Identidad T(r)=r")
             # Curva de transformación
-            ax.plot(list(x_points), list(y_points), color="royalblue", lw=2, marker="o",
+            ax.plot(list(entrada), list(salida), color="royalblue", lw=2, marker="o",
                     markersize=6, markerfacecolor="white", markeredgewidth=2, label="T(r)")
             # Anotamos los puntos de control
-            for r, s in zip(x_points, y_points):
+            for r, s in zip(entrada, salida):
                 ax.annotate(f"({r},{s})", xy=(r, s), xytext=(6, 6),
                             textcoords="offset points", fontsize=8, color="royalblue")
             ax.set_xlim(-5, 260)

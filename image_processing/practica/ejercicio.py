@@ -88,7 +88,7 @@ def ejercicio_uno_c():
     entrada = (0, 149, 150, 255)
     salida  = (0,  50,  50, 255)
 
-    img_linear = img_ganancia.linear_transform(x_points=entrada, y_points=salida)
+    img_linear = img_ganancia.linear_transform(entrada=entrada, salida=salida)
     #img_linear.histogram(block=False)
     img_linear.show(block=False)
 
@@ -96,7 +96,7 @@ def ejercicio_uno_c():
     gama_mas_linear = (
         img_ganancia
         .gamma_transform(1.3)
-        .linear_transform(x_points=entrada, y_points=salida)
+        .linear_transform(entrada=entrada, salida=salida)
     )
     #gama_mas_linear.histogram(block=False)
     gama_mas_linear.show(block=False)
@@ -177,7 +177,7 @@ def ejercicio_cinco():
 
     img_linear = (
         imagen
-        .linear_transform(x_points=entrada, y_points=salida, show_transform=True)
+        .linear_transform(entrada=entrada, salida=salida, show_transform=True)
             
     )
     img_linear.histogram(block=False)
