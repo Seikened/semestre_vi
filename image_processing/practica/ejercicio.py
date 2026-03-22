@@ -85,10 +85,10 @@ def ejercicio_uno_c():
     #img_tranform.histogram(block=False)
     img_tranform.show(block=False)
 
-    puntos_x = (0, 149, 150, 255)
-    puntos_y = (0,  50,  50, 255)
+    entrada = (0, 149, 150, 255)
+    salida  = (0,  50,  50, 255)
 
-    img_linear = img_ganancia.linear_transform(x_points=puntos_x, y_points=puntos_y)
+    img_linear = img_ganancia.linear_transform(x_points=entrada, y_points=salida)
     #img_linear.histogram(block=False)
     img_linear.show(block=False)
 
@@ -96,7 +96,7 @@ def ejercicio_uno_c():
     gama_mas_linear = (
         img_ganancia
         .gamma_transform(1.3)
-        .linear_transform(x_points=puntos_x, y_points=puntos_y)
+        .linear_transform(x_points=entrada, y_points=salida)
     )
     #gama_mas_linear.histogram(block=False)
     gama_mas_linear.show(block=False)
@@ -114,15 +114,21 @@ def ejercicio_dos():
 
     imagen: DynamicVisionNode = load_image("laboratorio")
     imagen.histogram(block=False)
-    imagen.show(block=False)
+
+    
     
     img_tranform = (
         imagen
-        .to_negative()
+        .gamma_transform(.5)
     )
     img_tranform.histogram(block=False)
-    img_tranform.show(block=False)
-    
+
+    img_acomuladp = (
+        imagen
+        .gamma_transform(0.5)
+        .acumulado_histograma()
+    )
+    img_acomuladp.histogram()
 
     plt.show()
 
@@ -144,7 +150,13 @@ def ejercicio_cuatro():
     Pruebe si puede arreglar esta imagen aplicando simplemente ganancia digital. ¿Qué resultados
     obtiene? Explique usando el histograma.
     """
-    pass
+    imagen: DynamicVisionNode = load_image("tumba")
+    imagen.histogram(block=False)
+
+    img_ganancia = imagen.multiplier(2.0)
+    img_ganancia.histogram(block=False)
+
+    plt.show()
 
 # Ejercicio 5
 def ejercicio_cinco():
@@ -157,8 +169,21 @@ def ejercicio_cinco():
     las tres funciones de transformación. ¿Cuáles son las diferencias que encontró entre las funciones y sus
     resultados?
     """
-    pass
+    imagen: DynamicVisionNode = load_image("tumba")
+    imagen.histogram(block=False)
+    
+    entrada = (0, 149, 150, 255)
+    salida  = (0,  50,  50, 255)
 
+    img_linear = (
+        imagen
+        .linear_transform(x_points=entrada, y_points=salida, show_transform=True)
+            
+    )
+    img_linear.histogram(block=False)
+    
+
+    plt.show()
 
 # Ejercicio 6
 def ejercicio_seis():
@@ -196,13 +221,13 @@ def ejercicio_ocho():
 
 
 if __name__ == "__main__":
-    #ejercicio_uno_a() ✅
-    #ejercicio_uno_b() ✅
-    #ejercicio_uno_c() ✅
-    ejercicio_dos()
+    #ejercicio_uno_a() #✅
+    #ejercicio_uno_b() #✅
+    #ejercicio_uno_c() #✅
+    #ejercicio_dos() #✅
     #ejercicio_tres()
-    #ejercicio_cuatro()
-    #ejercicio_cinco()
+    #ejercicio_cuatro() #✅
+    ejercicio_cinco()
     #ejercicio_seis()
     #ejercicio_siete()
     #ejercicio_ocho()
