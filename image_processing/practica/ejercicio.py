@@ -42,9 +42,6 @@ def ejercicio_uno_a():
     # Solo gama
     img_tranform = img_ganancia.transformacion_gamma(2.0)
     img_tranform.mostrar(block=False)
-    
-    plt.mostrar()
-    
 
 
 def ejercicio_uno_b():
@@ -64,9 +61,7 @@ def ejercicio_uno_b():
         .negativo()
         .transformacion_gamma(2.0))
     img_negativo.mostrar(block=False)
-    
-    plt.mostrar()
-    
+
 
 def ejercicio_uno_c():
     """
@@ -101,8 +96,6 @@ def ejercicio_uno_c():
     #gama_mas_linear.histograma(block=False)
     gama_mas_linear.mostrar(block=False)
 
-    plt.mostrar()
-
 # Ejercicio 2
 def ejercicio_dos():
     """
@@ -130,8 +123,6 @@ def ejercicio_dos():
     )
     img_acomuladp.histograma()
 
-    plt.mostrar()
-
 
 # Ejercicio 3
 def ejercicio_tres():
@@ -155,8 +146,6 @@ def ejercicio_cuatro():
 
     img_ganancia = imagen.ganancia(2.0)
     img_ganancia.histograma(block=False)
-
-    plt.mostrar()
 
 # Ejercicio 5
 def ejercicio_cinco():
@@ -197,7 +186,6 @@ def ejercicio_cinco():
         .ecualizar()
     )
     img_ecualizacion.histograma(block=False)
-    plt.mostrar()
 
 # Ejercicio 6
 def ejercicio_seis():
@@ -245,4 +233,5 @@ if __name__ == "__main__":
     #ejercicio_seis()
     #ejercicio_siete()
     #ejercicio_ocho()
+    plt.show()
 
