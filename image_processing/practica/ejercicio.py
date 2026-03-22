@@ -21,7 +21,7 @@ files = {
 
 
 def load_image(nombre:str) -> DynamicVisionNode:
-    return DynamicVisionNode.from_file(DATA_DIR / files[nombre])
+    return DynamicVisionNode.desde_archivo(DATA_DIR / files[nombre])
 
 
 # Ejercicio 1
@@ -34,16 +34,16 @@ def ejercicio_uno_a():
     Explique cómo seleccionó el procesamiento aplicado.
     """
     imagen: DynamicVisionNode = load_image("torax")
-    #imagen.histogram(block=False)
-    imagen.show(block=False)
+    #imagen.histograma(block=False)
+    imagen.mostrar(block=False)
 
-    img_ganancia = imagen.multiplier(1.2)
+    img_ganancia = imagen.ganancia(1.2)
 
     # Solo gama
-    img_tranform = img_ganancia.gamma_transform(2.0)
-    img_tranform.show(block=False)
+    img_tranform = img_ganancia.transformacion_gamma(2.0)
+    img_tranform.mostrar(block=False)
     
-    plt.show()
+    plt.mostrar()
     
 
 
@@ -55,17 +55,17 @@ def ejercicio_uno_b():
     caso? Explique cómo seleccionó el procesamiento aplicado.
     """
     imagen: DynamicVisionNode = load_image("torax")
-    imagen.show(block=False)
+    imagen.mostrar(block=False)
     
     
     img_negativo = (
         imagen
-        .to_grayscale()
-        .to_negative()
-        .gamma_transform(2.0))
-    img_negativo.show(block=False)
+        .escala_grises()
+        .negativo()
+        .transformacion_gamma(2.0))
+    img_negativo.mostrar(block=False)
     
-    plt.show()
+    plt.mostrar()
     
 
 def ejercicio_uno_c():
@@ -75,33 +75,33 @@ def ejercicio_uno_c():
     articulación. Explique cómo seleccionó el procesamiento aplicado.
     """
     imagen: DynamicVisionNode = load_image("torax")
-    #imagen.histogram(block=False)
-    imagen.show(block=False)
+    #imagen.histograma(block=False)
+    imagen.mostrar(block=False)
 
-    img_ganancia = imagen.multiplier(1.2)
+    img_ganancia = imagen.ganancia(1.2)
 
     # Solo gama
-    img_tranform = img_ganancia.gamma_transform(2.0)
-    #img_tranform.histogram(block=False)
-    img_tranform.show(block=False)
+    img_tranform = img_ganancia.transformacion_gamma(2.0)
+    #img_tranform.histograma(block=False)
+    img_tranform.mostrar(block=False)
 
     entrada = (0, 149, 150, 255)
     salida  = (0,  50,  50, 255)
 
-    img_linear = img_ganancia.linear_transform(entrada=entrada, salida=salida)
-    #img_linear.histogram(block=False)
-    img_linear.show(block=False)
+    img_linear = img_ganancia.transformacion_lineal(entrada=entrada, salida=salida)
+    #img_linear.histograma(block=False)
+    img_linear.mostrar(block=False)
 
     # Gama + linear
     gama_mas_linear = (
         img_ganancia
-        .gamma_transform(1.3)
-        .linear_transform(entrada=entrada, salida=salida)
+        .transformacion_gamma(1.3)
+        .transformacion_lineal(entrada=entrada, salida=salida)
     )
-    #gama_mas_linear.histogram(block=False)
-    gama_mas_linear.show(block=False)
+    #gama_mas_linear.histograma(block=False)
+    gama_mas_linear.mostrar(block=False)
 
-    plt.show()
+    plt.mostrar()
 
 # Ejercicio 2
 def ejercicio_dos():
@@ -113,24 +113,24 @@ def ejercicio_dos():
     """
 
     imagen: DynamicVisionNode = load_image("laboratorio")
-    imagen.histogram(block=False)
+    imagen.histograma(block=False)
 
     
     
     img_tranform = (
         imagen
-        .gamma_transform(.5)
+        .transformacion_gamma(.5)
     )
-    img_tranform.histogram(block=False)
+    img_tranform.histograma(block=False)
 
     img_acomuladp = (
         imagen
-        .gamma_transform(0.5)
-        .acumulado_histograma()
+        .transformacion_gamma(0.5)
+        .ecualizar()
     )
-    img_acomuladp.histogram()
+    img_acomuladp.histograma()
 
-    plt.show()
+    plt.mostrar()
 
 
 # Ejercicio 3
@@ -151,12 +151,12 @@ def ejercicio_cuatro():
     obtiene? Explique usando el histograma.
     """
     imagen: DynamicVisionNode = load_image("tumba")
-    imagen.histogram(block=False)
+    imagen.histograma(block=False)
 
-    img_ganancia = imagen.multiplier(2.0)
-    img_ganancia.histogram(block=False)
+    img_ganancia = imagen.ganancia(2.0)
+    img_ganancia.histograma(block=False)
 
-    plt.show()
+    plt.mostrar()
 
 # Ejercicio 5
 def ejercicio_cinco():
@@ -170,20 +170,34 @@ def ejercicio_cinco():
     resultados?
     """
     imagen: DynamicVisionNode = load_image("tumba")
-    imagen.histogram(block=False)
+    imagen.histograma(block=False)
     
-    entrada = (0, 149, 150, 255)
-    salida  = (0,  50,  50, 255)
+    
+    # Transformación Lineal    
+    entrada = (0, 40, 70, 255)
+    salida  = (0,  140,  180, 255)
 
     img_linear = (
         imagen
-        .linear_transform(entrada=entrada, salida=salida, show_transform=True)
-            
+        .transformacion_lineal(entrada=entrada, salida=salida, show_transform=True)
     )
-    img_linear.histogram(block=False)
+    img_linear.histograma(block=False)
     
+    
+    # Transformación Gamma
+    img_gamma = (
+        imagen
+        .transformacion_gamma(0.5)
+    )
+    img_gamma.histograma(block=False)
 
-    plt.show()
+    #  Ecualización
+    img_ecualizacion = (
+        imagen
+        .ecualizar()
+    )
+    img_ecualizacion.histograma(block=False)
+    plt.mostrar()
 
 # Ejercicio 6
 def ejercicio_seis():

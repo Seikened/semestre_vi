@@ -21,7 +21,7 @@ Módulo: Ajustes Dinámicos y Ecualización
 ---------------------------------------
 Temas de la clase:
 1. Ajustes Dinámicos (Transformaciones Lineales por Tramos)
-   - Permite separar valores expandiendo el contraste en zonas específicas 
+   - Permite separar valores expandiendo el contraste en zonas específicas
      (ej: mejorar detalles en negros oscureciendo los valores bajos y estirando los medios).
 2. Ecualización de Histograma
    - Redistribuye las intensidades de los píxeles para tener una distribución uniforme.
@@ -29,19 +29,19 @@ Temas de la clase:
 
 class DynamicVisionNode(VisionNode):
     """
-    Clase que hereda de VisionNode para añadir transformaciones dinámicas 
+    Clase que hereda de VisionNode para añadir transformaciones dinámicas
     y métodos de ecualización, manteniendo el patrón de diseño fluido (Fluent API).
     """
 
     @classmethod
-    def from_vision_node(cls, node: VisionNode) -> Self:
+    def desde_nodo(cls, node: VisionNode) -> Self:
         """
         Permite convertir un VisionNode estándar a DynamicVisionNode
         sin tener que volver a cargar el archivo.
         """
         return cls(node.tensor.clone(), title=node.title)
 
-    def linear_transform(self, entrada: tuple, salida: tuple, show_transform: bool = False) -> Self:
+    def transformacion_lineal(self, entrada: tuple, salida: tuple, show_transform: bool = False) -> Self:
         """
         TEMA: Ajustes Dinámicos (Transformación a Tramos)
 
@@ -112,16 +112,14 @@ class DynamicVisionNode(VisionNode):
 
         return self.__class__(result_tensor, title=f"T(r→s) lineal por tramos de {self.title}")
 
-    
-
-    def plot_cdf(self, title_suffix: str = "") -> Self:
+    def graficar_cdf(self, title_suffix: str = "") -> Self:
         """
         Calcula y grafica el histograma acumulado (CDF) de la imagen actual.
         Útil para visualizar la distribución antes y después de transformaciones.
         """
         C, H, W = self.tensor.shape
         total_pixels = H * W
-        
+
         plt.figure()
         for c in range(C):
             channel = self.tensor[c]
@@ -129,26 +127,26 @@ class DynamicVisionNode(VisionNode):
             hist = torch.bincount(channel_255.flatten(), minlength=256).float()
             cdf = torch.cumsum(hist, dim=0)
             cdf_normalized = cdf / total_pixels
-            
+
             plt.plot(cdf_normalized.cpu().numpy(), color='orange' if C == 1 else ['r', 'g', 'b'][c], label=f"Canal {c}")
-            
+
         titulo = f"CDF - {self.title}"
         if title_suffix:
             titulo += f" ({title_suffix})"
-            
+
         plt.title(titulo)
         plt.xlabel("Intensidad de Píxel")
         plt.ylabel("Probabilidad Acumulada")
         plt.legend()
         plt.grid(True)
         plt.show(block=False)
-        
+
         return self
 
-    def acumulado_histograma(self) -> Self:
+    def ecualizar(self) -> Self:
         """
         TEMA: Ecualización de Histograma
-        
+
         Calcula el histograma acumulado (CDF - Cumulative Distribution Function) normalizado
         y lo utiliza como función de transformación para ecualizar la imagen.
         La transformación se aplica de forma independiente por canal de color
@@ -156,36 +154,32 @@ class DynamicVisionNode(VisionNode):
         """
         C, H, W = self.tensor.shape
         total_pixels = H * W
-        
+
         result_tensor = torch.zeros_like(self.tensor)
-        
+
         # Procesamos por canal de color (al menos que sea gris, en cuyo caso C=1)
         for c in range(C):
             channel = self.tensor[c]
-            
+
             # Pasamos los valores al rango discreto [0, 255] para calcular el histograma
             channel_255 = torch.clamp(channel * 255.0, 0, 255).to(torch.long)
-            
+
             # 1. Obtener el histograma (frecuencias de h_a)
             hist = torch.bincount(channel_255.flatten(), minlength=256).float()
-            
+
             # 2. Hacer el acumulado (sumatoria de h_a desde a=0 hasta i)
             cdf = torch.cumsum(hist, dim=0)
-            
+
             # 3. Normalizar a 1 dividiendo por el total de píxeles
             cdf_normalized = cdf / total_pixels
-            
+
             # 4. Forzamos los píxeles (mapeo) usando el CDF normalizado
             # El valor original (0-255) sirve como índice en el CDF
             equalized_channel = cdf_normalized[channel_255]
-            
+
             result_tensor[c] = equalized_channel
-            
+
         return self.__class__(result_tensor, title=f"Ecualizado de {self.title}")
-
-
-
-
 
 
 # ==========================================
@@ -194,44 +188,42 @@ class DynamicVisionNode(VisionNode):
 def demo_ajustes_dinamicos():
     try:
         # Usamos una imagen que tenga zonas muy oscuras para probar
-        #img_path = get_image_path("louvre5.bmp") 
+        #img_path = get_image_path("louvre5.bmp")
         img_path = get_image_path("taller1.jpg")
         if not img_path.exists():
             log.warning("No se encontró la imagen de prueba.")
             return
 
         # Cargamos como VisionNode y lo convertimos a DynamicVisionNode
-        base_node = VisionNode.from_file(img_path)
-        dyn_node = DynamicVisionNode.from_vision_node(base_node)
-        
-        # 1. Mostramos la original 
+        base_node = VisionNode.desde_archivo(img_path)
+        dyn_node = DynamicVisionNode.desde_nodo(base_node)
+
+        # 1. Mostramos la original
         dyn_node.title = "Original"
-        
+
         # 2. Aplicamos Ecualización de Histograma a una imagen en B/N para mejor visibilidad
-        img_b_n = dyn_node.to_grayscale()
-        img_b_n.show(block=False)
-        img_b_n.histogram(block=False)
-        img_b_n.plot_cdf("Antes")
-        
+        img_b_n = dyn_node.escala_grises()
+        img_b_n.mostrar(block=False)
+        img_b_n.histograma(block=False)
+        img_b_n.graficar_cdf("Antes")
+
         # 3. Aplicamos Ajuste Dinámico (Mejorar negros)
         # Puntos: (0, 100, 157, 255) -> (0, 0, 255, 255)
         #x_pts = (0, 100, 157, 255)
         #y_pts = (0, 0, 255, 255)
-        
-        
-        
-        #img_ajustada = img_b_n.piecewise_linear_transform(x_points=x_pts, y_points=y_pts)
-        #img_ajustada.show(block=False)
-        
-        # 4. Aplicamos Ecualización de Histograma (Acumulado)
-        img_ecualizada = img_b_n.acumulado_histograma()
-        img_ecualizada.show(block=False)
-        img_ecualizada.histogram(block=False)
-        img_ecualizada.plot_cdf("Después")
-        
+
+        #img_ajustada = img_b_n.transformacion_lineal(entrada=x_pts, salida=y_pts)
+        #img_ajustada.mostrar(block=False)
+
+        # 4. Aplicamos Ecualización de Histograma
+        img_ecualizada = img_b_n.ecualizar()
+        img_ecualizada.mostrar(block=False)
+        img_ecualizada.histograma(block=False)
+        img_ecualizada.graficar_cdf("Después")
+
         log.info("Demo de ajustes dinámicos completado. Cierra las ventanas para finalizar.")
         plt.show()
-        
+
     except Exception as e:
         log.error(f"Error en el demo: {e}")
 
