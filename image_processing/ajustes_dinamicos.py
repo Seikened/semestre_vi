@@ -33,14 +33,6 @@ class DynamicVisionNode(VisionNode):
     y métodos de ecualización, manteniendo el patrón de diseño fluido (Fluent API).
     """
 
-    @classmethod
-    def desde_nodo(cls, node: VisionNode) -> Self:
-        """
-        Permite convertir un VisionNode estándar a DynamicVisionNode
-        sin tener que volver a cargar el archivo.
-        """
-        return cls(node.tensor.clone(), title=node.title)
-
     def transformacion_lineal(self, entrada: tuple, salida: tuple, show_transform: bool = False) -> Self:
         """
         TEMA: Ajustes Dinámicos (Transformación a Tramos)
@@ -111,6 +103,81 @@ class DynamicVisionNode(VisionNode):
             plt.show(block=False)
 
         return self.__class__(result_tensor, title=f"T(r→s) lineal por tramos de {self.title}")
+
+    def transformacion_lineal_por_canal(
+        self,
+        Tr: tuple[tuple[int, int], ...],
+        Tg: tuple[tuple[int, int], ...],
+        Tb: tuple[tuple[int, int], ...],
+        show_transform: bool = True,
+    ) -> "DynamicVisionNode":
+        """
+        Aplica transformaciones lineales por tramos INDEPENDIENTES a cada canal RGB.
+
+        Cada T_x es una tupla de pares (entrada, salida) con los puntos de control:
+            Tr = ((0, 0), (100, 180), (255, 255))
+
+        Soporta dos modos:
+        - Imagen grayscale (1 canal): aplica las 3 T al mismo canal fuente → produce RGB.
+          Útil para generar falso color desde una imagen infrarroja.
+        - Imagen color (3 canales): aplica Tr→R, Tg→G, Tb→B de forma independiente.
+
+        Args:
+            Tr: Puntos de control (entrada, salida) para el canal Rojo.
+            Tg: Puntos de control (entrada, salida) para el canal Verde.
+            Tb: Puntos de control (entrada, salida) para el canal Azul.
+            show_transform: Si True, grafica las 3 curvas T(r) y la imagen resultado.
+        """
+        def _desempacar(T):
+            return tuple(p[0] for p in T), tuple(p[1] for p in T)
+
+        if self.is_grayscale:
+            # Modo falso color IR: las 3 T se aplican al mismo canal fuente
+            fuente = self.__class__(self.tensor.clone(), title=self.title)
+            canales_resultado = [
+                fuente.transformacion_lineal(*_desempacar(T), show_transform=False).tensor
+                for T in (Tr, Tg, Tb)
+            ]
+        else:
+            # Modo color: cada T se aplica al canal que le corresponde
+            canales = self.separar_canales()
+            canales_resultado = [
+                self.__class__(nodo.tensor.clone(), title=nodo.title)
+                    .transformacion_lineal(*_desempacar(T), show_transform=False).tensor
+                for T, nodo in zip((Tr, Tg, Tb), canales.values())
+            ]
+
+        tensor_rgb = torch.cat(canales_resultado, dim=0)
+
+        if show_transform:
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            specs = [("Rojo", "red", Tr), ("Verde", "green", Tg), ("Azul", "blue", Tb)]
+
+            for ax, (nombre, color, T) in zip(axes, specs):
+                e = [p[0] for p in T]
+                s = [p[1] for p in T]
+                ax.plot([0, 255], [0, 255], color="gray", linestyle="--", lw=1, label="Identidad")
+                ax.plot(e, s, color=color, lw=2, marker="o", markersize=6,
+                        markerfacecolor="white", markeredgewidth=2, label=f"T_{nombre[0].lower()}(r)")
+                for r_pt, s_pt in zip(e, s):
+                    ax.annotate(f"({r_pt},{s_pt})", xy=(r_pt, s_pt), xytext=(6, 6),
+                                textcoords="offset points", fontsize=8, color=color)
+                ax.set_xlim(-5, 260)
+                ax.set_ylim(-5, 260)
+                ax.set_xlabel("Entrada r [0–255]")
+                ax.set_ylabel("Salida s [0–255]")
+                ax.set_title(f"T_{nombre[0].lower()}(r) — Canal {nombre}")
+                ax.legend(loc="upper left")
+                ax.grid(True, linestyle=":", alpha=0.5)
+                ax.set_aspect("equal")
+
+            fig.suptitle("Transformaciones de falso color por canal", fontsize=13, weight="bold")
+            plt.tight_layout()
+            plt.show(block=False)
+
+        resultado = self.__class__(tensor_rgb, title=f"Falso Color de {self.title}")
+        resultado.mostrar(block=False)
+        return resultado
 
     def graficar_cdf(self, title_suffix: str = "") -> Self:
         """
