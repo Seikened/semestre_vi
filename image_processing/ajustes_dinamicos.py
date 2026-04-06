@@ -179,34 +179,48 @@ class DynamicVisionNode(VisionNode):
         resultado.mostrar(block=False)
         return resultado
 
-    def graficar_cdf(self, title_suffix: str = "") -> Self:
+    def graficar_acumulado(self, title_suffix: str = "", block: bool = False) -> Self:
         """
         Calcula y grafica el histograma acumulado (CDF) de la imagen actual.
+        Incluye la diagonal de referencia (CDF ideal = distribución uniforme).
         Útil para visualizar la distribución antes y después de transformaciones.
         """
+        import numpy as np
+
         C, H, W = self.tensor.shape
         total_pixels = H * W
 
-        plt.figure()
+        fig, ax = plt.subplots(figsize=(6, 5))
+
+        # Diagonal de referencia: CDF ideal (distribución perfectamente uniforme)
+        ax.plot([0, 255], [0, 1], color="gray", linestyle="--", lw=1.5, label="Ideal (uniforme)")
+
+        colores = ["orange"] if C == 1 else ["red", "green", "blue"]
+        nombres = ["B/N"] if C == 1 else ["Rojo", "Verde", "Azul"]
+
         for c in range(C):
             channel = self.tensor[c]
             channel_255 = torch.clamp(channel * 255.0, 0, 255).to(torch.long)
             hist = torch.bincount(channel_255.flatten(), minlength=256).float()
             cdf = torch.cumsum(hist, dim=0)
-            cdf_normalized = cdf / total_pixels
+            cdf_normalized = (cdf / total_pixels).cpu().numpy()
 
-            plt.plot(cdf_normalized.cpu().numpy(), color='orange' if C == 1 else ['r', 'g', 'b'][c], label=f"Canal {c}")
+            ax.plot(np.arange(256), cdf_normalized,
+                    color=colores[c], lw=2, label=f"CDF {nombres[c]}")
 
-        titulo = f"CDF - {self.title}"
+        titulo = f"Histograma Acumulado\n{self.title}"
         if title_suffix:
             titulo += f" ({title_suffix})"
 
-        plt.title(titulo)
-        plt.xlabel("Intensidad de Píxel")
-        plt.ylabel("Probabilidad Acumulada")
-        plt.legend()
-        plt.grid(True)
-        plt.show(block=False)
+        ax.set_title(titulo)
+        ax.set_xlabel("Intensidad de Píxel [0–255]")
+        ax.set_ylabel("Probabilidad Acumulada")
+        ax.set_xlim(0, 255)
+        ax.set_ylim(0, 1)
+        ax.legend()
+        ax.grid(True, linestyle=":", alpha=0.5)
+        plt.tight_layout()
+        plt.show(block=block)
 
         return self
 
@@ -272,7 +286,7 @@ def demo_ajustes_dinamicos():
         img_b_n = dyn_node.escala_grises()
         img_b_n.mostrar(block=False)
         img_b_n.histograma(block=False)
-        img_b_n.graficar_cdf("Antes")
+        img_b_n.graficar_acumulado("Antes")
 
         # 3. Aplicamos Ajuste Dinámico (Mejorar negros)
         # Puntos: (0, 100, 157, 255) -> (0, 0, 255, 255)
@@ -286,7 +300,7 @@ def demo_ajustes_dinamicos():
         img_ecualizada = img_b_n.ecualizar()
         img_ecualizada.mostrar(block=False)
         img_ecualizada.histograma(block=False)
-        img_ecualizada.graficar_cdf("Después")
+        img_ecualizada.graficar_acumulado("Después")
 
         log.info("Demo de ajustes dinámicos completado. Cierra las ventanas para finalizar.")
         plt.show()

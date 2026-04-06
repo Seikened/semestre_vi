@@ -101,7 +101,7 @@ class VisionNode:
     # ==========================================
 
     def binarizar(self, threshold: float = 0.5) -> Self:
-        """MODO BRUTO (Global Threshold)."""
+        """MODO BRUTO (Global Threshold). De 0 a 1, el umbral se aplica directamente al tensor."""
         tensor_bin = (self.tensor > threshold).float()
         return self.__class__(tensor_bin, title=f"Bin (th={threshold}) de {self.title}")
 
@@ -248,14 +248,22 @@ class VisionNode:
             counts, bin_edges = np.histogram(datos_255, bins=256, range=(0, 256))
             bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
 
-            ax.plot(bin_centers, counts, color=color, lw=1.5)
-            ax.fill_between(bin_centers, counts, color=color, alpha=0.2)
+            # Detectar imagen "dispersa" (ej: binarizada): bins no vacíos < 10% del total
+            bins_con_datos = np.count_nonzero(counts)
+            es_disperso = bins_con_datos < 26  # menos de ~10% de los 256 bins
+
+            ax.bar(bin_centers, counts, width=1.0, color=color, alpha=0.7)
             ax.axvline(x=255, color='red', linestyle='--', alpha=0.6, label='Saturación')
-            ax.set_yscale('log', nonpositive='clip')
+
+            if not es_disperso:
+                ax.set_yscale('log', nonpositive='clip')
+                ax.set_ylabel("Píxeles (Log)")
+            else:
+                ax.set_ylabel("Píxeles")
+
             ax.set_title(f"Canal {nombre}", fontsize=11)
             ax.set_xlim(-5, 260)
             ax.set_xlabel("Intensidad [0 - 255]")
-            ax.set_ylabel("Píxeles (Log)")
             ax.grid(True, linestyle=':', alpha=0.4)
             ax.legend(loc="upper right")
 
