@@ -3,11 +3,12 @@ import sys
 from typing import Self
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from colorstreak import Logger as log
 
 # Importamos la clase base que modificamos previamente para soportar herencia fluida
-from image_processing.vision_node import VisionNode, get_image_path
+from image_processing.vision_node import VisionNode, get_image_path, tag
 
 # Ensure the project root is in sys.path so direct executions can find the 'image_processing' module
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -33,6 +34,7 @@ class DynamicVisionNode(VisionNode):
     y métodos de ecualización, manteniendo el patrón de diseño fluido (Fluent API).
     """
 
+    @tag(tipo="transformacion", hace="Transformación lineal por tramos (piecewise).", depende_de=("tensor",))
     def transformacion_lineal(self, entrada: tuple, salida: tuple, show_transform: bool = False) -> Self:
         """
         TEMA: Ajustes Dinámicos (Transformación a Tramos)
@@ -104,6 +106,8 @@ class DynamicVisionNode(VisionNode):
 
         return self.__class__(result_tensor, title=f"T(r→s) lineal por tramos de {self.title}")
 
+    @tag(tipo="transformacion", hace="3 transformaciones lineales independientes para falso color.",
+         depende_de=("transformacion_lineal", "separar_canales"))
     def transformacion_lineal_por_canal(
         self,
         Tr: tuple[tuple[int, int], ...],
@@ -179,14 +183,13 @@ class DynamicVisionNode(VisionNode):
         resultado.mostrar(block=False)
         return resultado
 
+    @tag(tipo="grafica", hace="CDF (histograma acumulado) por canal.", depende_de=("tensor",))
     def graficar_acumulado(self, title_suffix: str = "", block: bool = False) -> Self:
         """
         Calcula y grafica el histograma acumulado (CDF) de la imagen actual.
         Incluye la diagonal de referencia (CDF ideal = distribución uniforme).
         Útil para visualizar la distribución antes y después de transformaciones.
         """
-        import numpy as np
-
         C, H, W = self.tensor.shape
         total_pixels = H * W
 
@@ -224,6 +227,7 @@ class DynamicVisionNode(VisionNode):
 
         return self
 
+    @tag(tipo="transformacion", hace="Ecualización de histograma vía CDF normalizado.", depende_de=("tensor",))
     def ecualizar(self) -> Self:
         """
         TEMA: Ecualización de Histograma

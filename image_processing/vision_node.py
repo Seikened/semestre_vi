@@ -22,6 +22,25 @@ def get_image_path(name: str) -> Path:
     return data_path / name
 
 
+def tag(tipo: str, hace: str = "", depende_de: tuple[str, ...] = ()):
+    """
+    Decorador de metadata para documentar la API.
+
+    Args:
+        tipo:       "factory" | "transformacion" | "grafica" | "utilidad" | "binarizacion"
+        hace:       Resumen corto (una línea) de lo que hace.
+        depende_de: Otros métodos/funciones de los que depende internamente.
+
+    Uso:
+        @tag(tipo="grafica", hace="Renderiza el tensor", depende_de=("tensor",))
+        def mostrar(self): ...
+    """
+    def deco(func):
+        func._tag = {"tipo": tipo, "hace": hace, "depende_de": tuple(depende_de)}
+        return func
+    return deco
+
+
 # ==========================================
 # VisionNode
 # ==========================================
@@ -37,6 +56,37 @@ class VisionNode:
         self.is_grayscale = (self.channels == 1)
 
     @classmethod
+    def describir_api(cls) -> None:
+        """Imprime una tabla con la metadata (@tag) de todos los métodos de la clase y sus padres."""
+        vistos = set()
+        filas = []
+        for klass in cls.__mro__:
+            if klass is object:
+                continue
+            for nombre, attr in vars(klass).items():
+                if nombre.startswith("_") or nombre in vistos:
+                    continue
+                func = attr.__func__ if isinstance(attr, (classmethod, staticmethod)) else attr
+                if not callable(func):
+                    continue
+                vistos.add(nombre)
+                meta = getattr(func, "_tag", None)
+                if meta:
+                    filas.append((klass.__name__, nombre, meta["tipo"], meta["hace"],
+                                  ", ".join(meta["depende_de"]) or "—"))
+                else:
+                    filas.append((klass.__name__, nombre, "SIN TAG", "", "—"))
+
+        filas.sort(key=lambda r: (r[2], r[0], r[1]))
+        w = [max(len(str(f[i])) for f in filas + [("Clase","Método","Tipo","Hace","Depende de")]) for i in range(5)]
+        header = ("Clase", "Método", "Tipo", "Hace", "Depende de")
+        print(" | ".join(str(h).ljust(w[i]) for i, h in enumerate(header)))
+        print("-+-".join("-" * w[i] for i in range(5)))
+        for f in filas:
+            print(" | ".join(str(f[i]).ljust(w[i]) for i in range(5)))
+
+    @classmethod
+    @tag(tipo="factory", hace="Carga imagen desde archivo y la convierte a tensor RGB normalizado [0,1].")
     def desde_archivo(cls, path: Path) -> Self:
         """Factory method para instanciar directamente desde una ruta."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -54,16 +104,19 @@ class VisionNode:
     # MÉTODOS DE TRANSFORMACIÓN (Devuelven VisionNode)
     # ==========================================
 
+    @tag(tipo="transformacion", hace="Invierte el tensor (1-x).", depende_de=("tensor",))
     def negativo(self) -> Self:
         """Invierte los valores del tensor matemáticamente."""
         tensor_neg = 1.0 - self.tensor
         return self.__class__(tensor_neg, title=f"Negativo de {self.title}")
 
+    @tag(tipo="transformacion", hace="Colapsa RGB a 1 canal promediando.", depende_de=("tensor",))
     def escala_grises(self) -> Self:
         """Convierte a blanco y negro colapsando los canales RGB."""
         tensor_bn = torch.mean(self.tensor, dim=0, keepdim=True)
         return self.__class__(tensor_bn, title=f"B/N de {self.title}")
 
+    @tag(tipo="utilidad", hace="Separa RGB en 3 nodos independientes.", depende_de=("tensor", "is_grayscale"))
     def separar_canales(self) -> dict[str, Self]:
         """Separa la imagen en sus 3 canales base como nodos independientes."""
         if self.is_grayscale:
@@ -75,11 +128,13 @@ class VisionNode:
             "Azul": self.__class__(self.tensor[2:3, :, :], title="Canal Azul")
         }
 
+    @tag(tipo="transformacion", hace="Multiplica por factor con clamp [0,1].", depende_de=("tensor",))
     def ganancia(self, factor: float) -> Self:
         """Aplica un factor de multiplicación al tensor forzando los límites [0, 1]."""
         tensor_mult = torch.clamp(self.tensor * factor, min=0.0, max=1.0)
         return self.__class__(tensor_mult, title=f"x{factor} de {self.title}")
 
+    @tag(tipo="transformacion", hace="Normalización min-max al rango [0,1].", depende_de=("tensor",))
     def estirar_contraste(self) -> Self:
         """
         Expande el rango de píxeles para que ocupen todo el espectro [0.0, 1.0].
@@ -100,23 +155,42 @@ class VisionNode:
     # MÉTODOS DE BINARIZACIÓN (Estrategias)
     # ==========================================
 
+    @tag(tipo="binarizacion", hace="Umbral global: tensor > th.", depende_de=("tensor",))
     def binarizar(self, threshold: float = 0.5) -> Self:
         """MODO BRUTO (Global Threshold). De 0 a 1, el umbral se aplica directamente al tensor."""
         tensor_bin = (self.tensor > threshold).float()
         return self.__class__(tensor_bin, title=f"Bin (th={threshold}) de {self.title}")
 
+    @tag(tipo="binarizacion", hace="Umbral por rango: lower ≤ x ≤ upper.", depende_de=("tensor",))
     def binarizar_rango(self, lower: float, upper: float) -> Self:
         """MODO RANGO (Bandpass / InRange)."""
         tensor_bin = ((self.tensor >= lower) & (self.tensor <= upper)).float()
         return self.__class__(tensor_bin, title=f"Bin Rango [{lower}-{upper}] de {self.title}")
 
+    @tag(tipo="binarizacion", hace="Umbral adaptativo por media local vía integral image (O(1) por pixel).",
+         depende_de=("tensor", "torch.cumsum"))
     def binarizar_adaptativo(self, kernel_size: int = 15, c: float = 0.05) -> Self:
-        """MODO INDUSTRIA (Adaptive Thresholding con Kernel)."""
+        """MODO INDUSTRIA (Adaptive Thresholding con Kernel).
+        Implementación con integral image (summed-area table): O(1) por pixel,
+        independiente del tamaño del kernel.
+        """
         import torch.nn.functional as F
 
-        pad = kernel_size // 2
-        tensor_padded = F.pad(self.tensor.unsqueeze(0), (pad, pad, pad, pad), mode='reflect')
-        local_mean = F.avg_pool2d(tensor_padded, kernel_size, stride=1).squeeze(0)
+        if kernel_size % 2 == 0:
+            raise ValueError(f"kernel_size debe ser impar, recibido {kernel_size}")
+
+        ks = kernel_size
+        pad = ks // 2
+        C, H, W = self.tensor.shape
+
+        padded = F.pad(self.tensor, (pad, pad, pad, pad), mode="reflect")
+        integral = F.pad(padded.cumsum(-1).cumsum(-2), (1, 0, 1, 0))
+
+        suma = (integral[:, ks:ks + H, ks:ks + W]
+                - integral[:, :H,        ks:ks + W]
+                - integral[:, ks:ks + H, :W]
+                + integral[:, :H,        :W])
+        local_mean = suma / (ks * ks)
         tensor_bin = (self.tensor > (local_mean - c)).float()
 
         return self.__class__(tensor_bin, title=f"Bin Adaptativo (k={kernel_size}) de {self.title}")
@@ -125,6 +199,7 @@ class VisionNode:
     # MÉTODOS AVANZADOS
     # ==========================================
 
+    @tag(tipo="transformacion", hace="Log transform: aclara zonas oscuras.", depende_de=("tensor",))
     def transformacion_log(self) -> Self:
         """Transformación logarítmica. Aclara zonas oscuras."""
         device = self.tensor.device
@@ -133,17 +208,20 @@ class VisionNode:
         tensor_log = torch.log1p(tensor_255) / denominador
         return self.__class__(tensor_log, title=f"Log Transform de {self.title}")
 
+    @tag(tipo="transformacion", hace="Gamma correction: x^gamma.", depende_de=("tensor",))
     def transformacion_gamma(self, gamma: float) -> Self:
         """Transformación exponencial (Gamma Correction)."""
         tensor_gamma = torch.pow(self.tensor, gamma)
         return self.__class__(tensor_gamma, title=f"Gamma (g={gamma}) de {self.title}")
 
+    @tag(tipo="transformacion", hace="Reduce profundidad de bits por canal.", depende_de=("tensor",))
     def cuantizar(self, n_bits: int = 8) -> Self:
         """Cuantización reduciendo el número de bits por canal."""
         levels = 2 ** n_bits
         tensor_quant = torch.floor(self.tensor * (levels - 1)) / (levels - 1)
         return self.__class__(tensor_quant, title=f"Cuantizado ({n_bits} bits) de {self.title}")
 
+    @tag(tipo="transformacion", hace="Pseudo-color térmico vía colormap.", depende_de=("escala_grises",))
     def pseudocolor_infrarrojo(self, cmap_name: str = "inferno") -> Self:
         """Aplica un mapa de color simulando una cámara infrarroja (térmica)."""
         import matplotlib.cm as cm
@@ -167,6 +245,7 @@ class VisionNode:
 
         return self.__class__(tensor_rgb, title=f"Infrarrojo Térmico ({cmap_name}) de {self.title}")
 
+    @tag(tipo="transformacion", hace="Permuta canales estilo Kodak Aerochrome.", depende_de=("tensor",))
     def falso_color_infrarrojo(self) -> Self:
         """Simula película Infrarroja a color (estilo Kodak Aerochrome)."""
         if self.is_grayscale:
@@ -183,6 +262,7 @@ class VisionNode:
     # MÉTODOS DE VISUALIZACIÓN
     # ==========================================
 
+    @tag(tipo="grafica", hace="Mapa de diferencia absoluta entre dos nodos.", depende_de=("mostrar",))
     def mostrar_diferencias(self, compare_to: "VisionNode", magnifier: float = 1.0, block: bool = True) -> Self:
         """Calcula y muestra el mapa de error absoluto entre dos nodos."""
         if self.tensor.shape != compare_to.tensor.shape:
@@ -193,6 +273,7 @@ class VisionNode:
         title = f"Diferencias: {self.title} vs {compare_to.title}"
         return self.__class__(tensor_diff, title=title).mostrar(block=block)
 
+    @tag(tipo="grafica", hace="Renderiza el tensor como imagen.", depende_de=("tensor", "is_grayscale"))
     def mostrar(self, block: bool = True) -> Self:
         """Renderiza el nodo actual."""
         img_disp = self.tensor.permute(1, 2, 0).cpu().squeeze().numpy()
@@ -206,6 +287,7 @@ class VisionNode:
         plt.show(block=block)
         return self
 
+    @tag(tipo="grafica", hace="Histograma por canal con escala log auto.", depende_de=("tensor", "is_grayscale"))
     def histograma(self, block: bool = True) -> Self:
         """Calcula y muestra el histograma del nodo en escala logarítmica.
 
@@ -272,6 +354,7 @@ class VisionNode:
         plt.show(block=block)
         return self
 
+    @tag(tipo="grafica", hace="Grid comparativo: original + canales + B/N.", depende_de=("separar_canales", "escala_grises"))
     def mostrar_reporte(self):
         """Renderiza un reporte comparativo entre la imagen original y sus canales."""
         if self.is_grayscale:
