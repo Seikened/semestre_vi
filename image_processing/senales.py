@@ -813,6 +813,144 @@ class SignalVisionNode(DynamicVisionNode):
         ejes_dft = [fig.add_subplot(2, 2, i) for i in (2, 3, 4)]
         return ax_imagen, ejes_dft, fig
 
+    # ──────────────────────────────────────────────────────────
+    # Visualización: espectro 2D con perfiles 1D (joint plot)
+    # ──────────────────────────────────────────────────────────
+
+    @tag(tipo="grafica",
+         hace="Espectro 2D + perfiles 1D (max-projection) alineados, picos marcados en ambos.",
+         depende_de=("tensor", "is_grayscale"))
+    def espectro_2d_con_perfiles(self, n_picos: int = 8, excluir_radio_dc: int = 20,
+                                  ventana_supresion: int = 10, radio_marcador: int = 12,
+                                  radio_dc_visual: int = 5, clip_percentil: float = 99.5,
+                                  escala_perfiles: str = "lineal",
+                                  block: bool = False) -> Self:
+        """
+        Joint plot del espectro: 2D con picos + perfiles 1D max-projection.
+
+        Layout por canal (RGB → 3 paneles lado a lado, grises → 1):
+            ┌──────────────┬──┐
+            │  perfil X    │  │  ← max sobre v de cada u
+            ├──────────────┼──┤
+            │              │P │
+            │  espectro 2D │er│
+            │  (con picos  │fi│
+            │   marcados)  │l │
+            │              │Y │
+            └──────────────┴──┘
+
+        Los perfiles muestran, para cada frecuencia, el valor más alto del
+        espectro en la dirección perpendicular. Esto captura picos sin importar
+        si están en los ejes centrales o en posiciones diagonales.
+
+        Args:
+            n_picos:           Picos a detectar por canal (mismo que espectro_2d_picos).
+            excluir_radio_dc:  Radio (px) excluido para detección y para los perfiles
+                                (evita que la baja frecuencia oculte los picos del patrón).
+            ventana_supresion: Supresión no-máxima alrededor de cada pico.
+            radio_marcador:    Radio del círculo dibujado sobre cada pico en el 2D.
+            radio_dc_visual:   Radio (px) del DC suprimido en el heatmap 2D.
+            clip_percentil:    Percentil de normalización del heatmap 2D.
+            escala_perfiles:   "lineal" (picos saltan como agujas, ideal para identificar)
+                                o "log" (ves toda la distribución, ideal para validar).
+            block:             Si True, bloquea hasta cerrar la ventana.
+        """
+        if escala_perfiles not in ("lineal", "log"):
+            raise ValueError(f"escala_perfiles debe ser 'lineal' o 'log', recibido {escala_perfiles!r}")
+
+        canales_dft = self._canales_para_dft()
+        canales_linea = self._canales_para_lineas()
+        n_canales = len(canales_dft)
+
+        ancho_fig = 6 * n_canales if n_canales > 1 else 8
+        fig = plt.figure(figsize=(ancho_fig, 7), constrained_layout=True)
+        gs_outer = GridSpec(1, n_canales, figure=fig, wspace=0.25)
+
+        for col, (canal_dft, canal_linea) in enumerate(zip(canales_dft, canales_linea)):
+            self._dibujar_panel_perfiles(
+                fig, gs_outer[0, col], canal_dft, canal_linea,
+                n_picos=n_picos, excluir_radio_dc=excluir_radio_dc,
+                ventana_supresion=ventana_supresion, radio_marcador=radio_marcador,
+                radio_dc_visual=radio_dc_visual, clip_percentil=clip_percentil,
+                escala_perfiles=escala_perfiles)
+
+        fig.suptitle(f"Espectro 2D + perfiles: {self.title}", fontsize=13, weight="bold")
+        plt.show(block=block)
+        return self
+
+    def _dibujar_panel_perfiles(self, fig, sub_gs, canal_dft: CanalEspec,
+                                  canal_linea: CanalEspec, *,
+                                  n_picos: int, excluir_radio_dc: int,
+                                  ventana_supresion: int, radio_marcador: int,
+                                  radio_dc_visual: int, clip_percentil: float,
+                                  escala_perfiles: str) -> None:
+        """Dibuja un panel completo (top + 2D + right) para un canal dado."""
+        canal_np = self.tensor[canal_dft.indice].cpu().numpy()
+
+        magnitud_vis = self._dft_magnitud_log(
+            canal_np, radio_dc=radio_dc_visual, clip_percentil=clip_percentil)
+        magnitud_perfiles = self._magnitud_para_perfiles(canal_np, excluir_radio_dc)
+
+        H, W = magnitud_perfiles.shape
+        gs = sub_gs.subgridspec(2, 2, width_ratios=[4, 1], height_ratios=[1, 4],
+                                 wspace=0.05, hspace=0.05)
+        ax_top = fig.add_subplot(gs[0, 0])
+        ax_2d  = fig.add_subplot(gs[1, 0])
+        ax_rgt = fig.add_subplot(gs[1, 1])
+
+        # 2D: heatmap + picos
+        ax_2d.imshow(magnitud_vis, cmap=canal_dft.color, vmin=0, vmax=1, aspect="auto")
+        ax_2d.set_xlabel("u (frecuencia X)")
+        ax_2d.set_ylabel("v (frecuencia Y)")
+
+        picos = self._detectar_picos_espectro(
+            canal_np, n_picos=n_picos, excluir_radio_dc=excluir_radio_dc,
+            ventana_supresion=ventana_supresion)
+        self._anotar_picos(ax_2d, picos, magnitud_vis.shape, canal_dft.nombre,
+                            radio_marcador=radio_marcador)
+
+        # Perfil X (top): max sobre rows → función de u
+        perfil_x = magnitud_perfiles.max(axis=0)
+        ax_top.plot(np.arange(W), perfil_x, color=canal_linea.color, lw=0.8)
+        ax_top.set_xlim(0, W - 1)
+        ax_top.set_title(f"Canal {canal_dft.nombre}", fontsize=11)
+        ax_top.tick_params(labelbottom=False)
+        ax_top.grid(True, linestyle=":", alpha=0.4)
+        if escala_perfiles == "log":
+            ax_top.set_yscale("log")
+        for u, _, _ in picos:
+            ax_top.axvline(x=u, color="red", linestyle=":", lw=0.8, alpha=0.7)
+
+        # Perfil Y (right): max sobre cols → función de v, rotado
+        perfil_y = magnitud_perfiles.max(axis=1)
+        ax_rgt.plot(perfil_y, np.arange(H), color=canal_linea.color, lw=0.8)
+        ax_rgt.set_ylim(H - 1, 0)  # invertido para alinear con imshow (origen arriba)
+        ax_rgt.tick_params(labelleft=False)
+        ax_rgt.grid(True, linestyle=":", alpha=0.4)
+        if escala_perfiles == "log":
+            ax_rgt.set_xscale("log")
+        for _, v, _ in picos:
+            ax_rgt.axhline(y=v, color="red", linestyle=":", lw=0.8, alpha=0.7)
+
+    @staticmethod
+    def _magnitud_para_perfiles(canal_np: np.ndarray, radio_dc: int) -> np.ndarray:
+        """
+        Magnitud cruda |F| del espectro 2D centrado, con DC suprimido.
+
+        Para los perfiles 1D usamos magnitud lineal (no log) con un DC fuertemente
+        suprimido — así los picos del patrón sobresalen como agujas claras.
+        """
+        espectro = np.fft.fftshift(np.fft.fft2(canal_np))
+        magnitud = np.abs(espectro)
+        if radio_dc > 0:
+            H, W = magnitud.shape
+            cy, cx = H // 2, W // 2
+            yy, xx = np.ogrid[:H, :W]
+            mascara_dc = (yy - cy) ** 2 + (xx - cx) ** 2 <= radio_dc ** 2
+            magnitud = magnitud.copy()
+            magnitud[mascara_dc] = 0
+        return magnitud
+
 
 # ==========================================
 # Demo / Test

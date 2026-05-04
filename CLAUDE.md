@@ -24,12 +24,29 @@ No test suite, linter, or CI/CD is configured.
 ## Architecture
 
 ### `image_processing/` (Python package)
-- **`vision_node.py`** — Core `VisionNode` class: an immutable, chainable image processing pipeline built on PyTorch tensors. GPU-aware (auto-detects CUDA). Supports binarization (global, adaptive, Otsu), log/gamma transforms, quantization, pseudo-color imaging, and channel operations.
-  - **Fluent API pattern**: each transformation returns a new `VisionNode`, enabling `VisionNode.from_file(path).gamma_transform(0.5).binarize_adaptive().show()`.
-  - `get_image_path(name)` helper resolves filenames relative to `image_processing/data/`.
-- **`ajustes_dinamicos.py`** — `DynamicVisionNode(VisionNode)` subclass. Adds piecewise-linear contrast transforms (`piecewise_linear_transform`) and histogram equalization via CDF (`acumulado_histograma`). Converts from a base node with `DynamicVisionNode.from_vision_node(node)`.
-- **`autoajuste_foco.py`** — Optical/focal-length calculations.
-- **`data/`** — Medical and sample images (BMP, JPEG, GIF).
+
+Cadena de herencia (todas clases inmutables con Fluent API sobre tensores PyTorch `(C,H,W)` en `[0,1]`, GPU-aware):
+
+```
+VisionNode → DynamicVisionNode → SignalVisionNode → NoiseVisionNode
+```
+
+- **`vision_node.py`** — `VisionNode` base. Factory `desde_archivo`; transforms (`negativo`, `escala_grises`, `ganancia`, `estirar_contraste`, `transformacion_log`, `transformacion_gamma`, `cuantizar`, `pseudocolor_infrarrojo`, `falso_color_infrarrojo`); binarización (`binarizar`, `binarizar_rango`, `binarizar_adaptativo` con integral image O(1) por pixel); utilidades (`separar_canales`); gráficas (`mostrar`, `histograma`, `mostrar_reporte`, `mostrar_diferencias`). Sistema de metadata `@tag` + `describir_api()` que recorre el MRO.
+  - `get_image_path(name)` resuelve rutas relativas a `image_processing/data/`.
+  - **Ojo**: `escala_grises` usa media aritmética `(R+G+B)/3`, NO luminancia BT.601. Decisión pedagógica, documentada en la clase.
+- **`ajustes_dinamicos.py`** — `DynamicVisionNode(VisionNode)`. Añade `transformacion_lineal` (piecewise por puntos de control), `transformacion_lineal_por_canal` (falso color con 3 curvas independientes), `graficar_acumulado` (CDF), `ecualizar` (ecualización de histograma vía CDF).
+- **`senales.py`** — `SignalVisionNode(DynamicVisionNode)`. Análisis frecuencial, convoluciones y filtros: `convolucion` (2D genérica con `flip_kernel` para correlación vs convolución), `convolucion_separable` (O(N·s) en vez de O(N·s²)), filtros lineales `suavizar` (box), `piramidal` (Chebyshev 2D), `gaussiano` (sigma auto via fórmula OpenCV); filtros no lineales `mediana` (F.unfold + `torch.median`), `mediana_cruz` (máscara en cruz `+`, 2s-1 muestras vs s², preserva diagonales), `filtro_sigma` (Lee 1983 adaptativo por varianza local vía integral image de `x` y `x²`, O(1) por pixel, preserva bordes); visualizaciones `senal_por_canal` (fila como señal 1D + FFT + lupa + slider), `comparar_fft` (dos nodos solapados), `transformada_fourier_2d` (fft2+fftshift+log). Incluye `@dataclass CanalEspec`, constantes de visualización, helpers `_aplicar_por_canal`, `_validar_size`, `_validar_kernel_normalizado`.
+- **`ruido.py`** — `NoiseVisionNode(SignalVisionNode)`. Modelos de ruido sintético: `sal_y_pimienta(cantidad, proporcion_sal, seed)` (máscara única por pixel aplicada a todos los canales, `proporcion_sal=1.0` = solo sal). Pendiente: `ruido_uniforme`, `ruido_normal` (se completan al vuelo conforme avanza la clase).
+- **`autoajuste_foco.py`** — Cálculos ópticos / longitud focal.
+- **`data/`** — Imágenes médicas y de muestra (BMP, JPEG, GIF).
+
+#### Cobertura por librerías estándar (referencia)
+
+Kornia cubre la mayoría de los filtros/ruidos con APIs sobre tensores PyTorch. Lo implementado a mano en este repo tiene intención pedagógica.
+
+- **Kornia reemplaza 1-a-1**: gaussian, box, median, separable conv, adaptive threshold, gamma, equalize, convolución 2D, ruido gaussiano, sal y pimienta.
+- **skimage / OpenCV**: equivalentes CPU para casi todo (`random_noise`, `filters.gaussian`, `filters.median`, `adaptiveThreshold`, `equalizeHist`, etc.).
+- **Únicos del repo (no hay equivalente directo en libs mainstream)**: `piramidal` (Chebyshev 2D), `mediana_cruz` (máscara en cruz, no es la mediana cuadrada estándar), `filtro_sigma` (Lee adaptativo con integral image), `falso_color_infrarrojo` (swap GRB estilo Aerochrome), `transformacion_lineal_por_canal`, `senal_por_canal` con lupa+slider+FFT, `comparar_fft` solapada, sistema `@tag`+`describir_api`, Fluent API inmutable con propagación de `title`.
 
 ### `econometrics/`
 - **`clases/`** — Lesson code: colinearity, moving averages, statsmodels regression, Breusch-Pagan tests.
