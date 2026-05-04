@@ -1,10 +1,12 @@
 from pathlib import Path
-
-import matplotlib.pyplot as plt
-import torch
-from colorstreak import Logger as log
 from typing import Self
 
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+import torch.nn.functional as F
+from colorstreak import Logger as log
 from PIL import Image
 from torchvision.transforms import v2
 
@@ -16,10 +18,19 @@ Contiene la clase VisionNode para manipulación fluida de tensores de imagen.
 # ==========================================
 # Helpers
 # ==========================================
-def get_image_path(name: str) -> Path:
-    """Obtiene la ruta a una imagen en la carpeta de datos por defecto."""
-    data_path = Path(__file__).parent / "data"
-    return data_path / name
+def get_image_path(name: str, base_dir: Path | str | None = None) -> Path:
+    """
+    Obtiene la ruta a una imagen.
+
+    Args:
+        name:     Nombre del archivo (puede incluir subcarpetas, ej. "patrones/x.bmp").
+        base_dir: Carpeta base donde buscar. Si es None usa `image_processing/data/`.
+    """
+    if base_dir is None:
+        base = Path(__file__).parent / "data"
+    else:
+        base = Path(base_dir)
+    return base / name
 
 
 def tag(tipo: str, hace: str = "", depende_de: tuple[str, ...] = ()):
@@ -55,10 +66,87 @@ class VisionNode:
         self.channels, self.height, self.width = self.tensor.shape
         self.is_grayscale = (self.channels == 1)
 
+    # ==========================================
+    # OPERADORES ARITMÉTICOS (estilo numpy / MathCad)
+    # ==========================================
+    # No aplican clamp automáticamente; usa `.clip()` al final si quieres
+    # recortar al rango [0,1]. Ejemplo MathCad:
+    #     clip(IMAGEN/3 + 127)    ← escala 0-255
+    # Equivalente aquí (escala 0-1):
+    #     (img/3 + 0.5).clip()
+
+    @staticmethod
+    def _obtener_tensor(otro) -> torch.Tensor | float | int:
+        """Extrae tensor si es VisionNode; deja pasar escalares."""
+        return otro.tensor if isinstance(otro, VisionNode) else otro
+
+    @staticmethod
+    def _etiqueta(otro) -> str:
+        return otro.title if isinstance(otro, VisionNode) else f"{otro:g}"
+
+    def _combinar(self, otro, op: str, func) -> Self:
+        tensor_otro = self._obtener_tensor(otro)
+        nuevo_tensor = func(self.tensor, tensor_otro)
+        return self.__class__(nuevo_tensor, title=f"({self.title} {op} {self._etiqueta(otro)})")
+
+    def __add__(self, otro) -> Self:      return self._combinar(otro, "+", lambda a, b: a + b)
+    def __sub__(self, otro) -> Self:      return self._combinar(otro, "-", lambda a, b: a - b)
+    def __mul__(self, otro) -> Self:      return self._combinar(otro, "*", lambda a, b: a * b)
+    def __truediv__(self, otro) -> Self:  return self._combinar(otro, "/", lambda a, b: a / b)
+
+    def __radd__(self, otro) -> Self:     return self._combinar(otro, "+", lambda a, b: b + a)
+    def __rsub__(self, otro) -> Self:     return self._combinar(otro, "-", lambda a, b: b - a)
+    def __rmul__(self, otro) -> Self:     return self._combinar(otro, "*", lambda a, b: b * a)
+    def __rtruediv__(self, otro) -> Self: return self._combinar(otro, "/", lambda a, b: b / a)
+
+    def __neg__(self) -> Self:
+        return self.__class__(-self.tensor, title=f"(-{self.title})")
+
+    @tag(tipo="transformacion", hace="Clamp al rango [min,max] (por defecto [0,1]).",
+         depende_de=("tensor",))
+    def clip(self, min: float = 0.0, max: float = 1.0) -> Self:
+        """Recorta los valores al rango [min, max]. Análogo a np.clip / MathCad clip."""
+        return self.__class__(self.tensor.clamp(min, max), title=f"clip({self.title})")
+
+    @tag(tipo="utilidad", hace="Valor máximo del tensor (escala 0-1).", depende_de=("tensor",))
+    def max(self) -> float:
+        """Valor máximo del tensor. Útil para verificar rango después de operaciones."""
+        return self.tensor.max().item()
+
+    @tag(tipo="utilidad", hace="Valor mínimo del tensor (escala 0-1).", depende_de=("tensor",))
+    def min(self) -> float:
+        """Valor mínimo del tensor. Útil para verificar rango después de operaciones."""
+        return self.tensor.min().item()
+
     @classmethod
     def describir_api(cls) -> None:
-        """Imprime una tabla con la metadata (@tag) de todos los métodos de la clase y sus padres."""
-        vistos = set()
+        """
+        Imprime una tabla con la metadata (@tag) de todos los métodos públicos
+        de la clase y sus padres.
+
+        Para cada nombre de método se muestra la clase que lo declara primero
+        en el MRO. Si esa declaración no tiene @tag pero alguna versión heredada
+        sí, se hereda el tag (las override sin @tag suelen ser auxiliares).
+        """
+        def _resolver_func(attr):
+            if isinstance(attr, (classmethod, staticmethod)):
+                return attr.__func__
+            return attr if callable(attr) else None
+
+        def _buscar_tag(nombre: str) -> dict | None:
+            for klass in cls.__mro__:
+                attr = vars(klass).get(nombre)
+                if attr is None:
+                    continue
+                func = _resolver_func(attr)
+                if func is None:
+                    continue
+                meta = getattr(func, "_tag", None)
+                if meta:
+                    return meta
+            return None
+
+        vistos: set[str] = set()
         filas = []
         for klass in cls.__mro__:
             if klass is object:
@@ -66,24 +154,24 @@ class VisionNode:
             for nombre, attr in vars(klass).items():
                 if nombre.startswith("_") or nombre in vistos:
                     continue
-                func = attr.__func__ if isinstance(attr, (classmethod, staticmethod)) else attr
-                if not callable(func):
+                if _resolver_func(attr) is None:
                     continue
                 vistos.add(nombre)
-                meta = getattr(func, "_tag", None)
+                meta = _buscar_tag(nombre)
                 if meta:
                     filas.append((klass.__name__, nombre, meta["tipo"], meta["hace"],
                                   ", ".join(meta["depende_de"]) or "—"))
                 else:
                     filas.append((klass.__name__, nombre, "SIN TAG", "", "—"))
 
-        filas.sort(key=lambda r: (r[2], r[0], r[1]))
-        w = [max(len(str(f[i])) for f in filas + [("Clase","Método","Tipo","Hace","Depende de")]) for i in range(5)]
         header = ("Clase", "Método", "Tipo", "Hace", "Depende de")
-        print(" | ".join(str(h).ljust(w[i]) for i, h in enumerate(header)))
-        print("-+-".join("-" * w[i] for i in range(5)))
+        filas.sort(key=lambda r: (r[2], r[0], r[1]))
+        anchos = [max(len(str(f[i])) for f in filas + [header]) for i in range(5)]
+
+        print(" | ".join(str(h).ljust(anchos[i]) for i, h in enumerate(header)))
+        print("-+-".join("-" * a for a in anchos))
         for f in filas:
-            print(" | ".join(str(f[i]).ljust(w[i]) for i in range(5)))
+            print(" | ".join(str(f[i]).ljust(anchos[i]) for i in range(5)))
 
     @classmethod
     @tag(tipo="factory", hace="Carga imagen desde archivo y la convierte a tensor RGB normalizado [0,1].")
@@ -110,9 +198,22 @@ class VisionNode:
         tensor_neg = 1.0 - self.tensor
         return self.__class__(tensor_neg, title=f"Negativo de {self.title}")
 
-    @tag(tipo="transformacion", hace="Colapsa RGB a 1 canal promediando.", depende_de=("tensor",))
+    @tag(tipo="transformacion", hace="Colapsa RGB a 1 canal promediando (media aritmética, no luminancia).",
+         depende_de=("tensor",))
     def escala_grises(self) -> Self:
-        """Convierte a blanco y negro colapsando los canales RGB."""
+        """
+        Convierte a blanco y negro colapsando los canales RGB con media aritmética:
+            gris = (R + G + B) / 3
+
+        NOTA: Esto NO es la conversión perceptualmente correcta. Librerías estándar
+        (OpenCV, scikit-image, Kornia, PIL) usan luminancia ITU-R BT.601:
+            gris = 0.299·R + 0.587·G + 0.114·B
+        que pondera el verde más alto porque el ojo humano es más sensible a él.
+
+        Aquí se usa la media simple por claridad pedagógica (todos los canales
+        contribuyen igual). Si necesitas equivalencia visual con otras libs,
+        aplica los pesos BT.601 manualmente.
+        """
         tensor_bn = torch.mean(self.tensor, dim=0, keepdim=True)
         return self.__class__(tensor_bn, title=f"B/N de {self.title}")
 
@@ -174,8 +275,6 @@ class VisionNode:
         Implementación con integral image (summed-area table): O(1) por pixel,
         independiente del tamaño del kernel.
         """
-        import torch.nn.functional as F
-
         if kernel_size % 2 == 0:
             raise ValueError(f"kernel_size debe ser impar, recibido {kernel_size}")
 
@@ -224,18 +323,10 @@ class VisionNode:
     @tag(tipo="transformacion", hace="Pseudo-color térmico vía colormap.", depende_de=("escala_grises",))
     def pseudocolor_infrarrojo(self, cmap_name: str = "inferno") -> Self:
         """Aplica un mapa de color simulando una cámara infrarroja (térmica)."""
-        import matplotlib.cm as cm
-        import numpy as np
-
         base = self if self.is_grayscale else self.escala_grises()
         base_np = base.tensor.squeeze(0).cpu().numpy()
 
-        try:
-            cmap = cm.get_cmap(cmap_name)
-        except AttributeError:
-            import matplotlib as mpl
-            cmap = mpl.colormaps[cmap_name]
-
+        cmap = mpl.colormaps[cmap_name]
         colored_rgba = cmap(base_np)
         tensor_rgb = torch.tensor(
             colored_rgba[..., :3],
@@ -296,8 +387,6 @@ class VisionNode:
                                              G   | B
         - Escala de grises: cuadrícula 1x2 → imagen | B/N
         """
-        import numpy as np
-
         img_disp = self.tensor.permute(1, 2, 0).cpu().squeeze().numpy()
         cmap_img = "gray" if self.is_grayscale else None
 
@@ -354,12 +443,13 @@ class VisionNode:
         plt.show(block=block)
         return self
 
-    @tag(tipo="grafica", hace="Grid comparativo: original + canales + B/N.", depende_de=("separar_canales", "escala_grises"))
-    def mostrar_reporte(self):
+    @tag(tipo="grafica", hace="Grid comparativo: original + canales + B/N.",
+         depende_de=("separar_canales", "escala_grises"))
+    def mostrar_reporte(self, block: bool = True) -> Self:
         """Renderiza un reporte comparativo entre la imagen original y sus canales."""
         if self.is_grayscale:
             log.warning("El reporte comparativo requiere una imagen RGB.")
-            return
+            return self
 
         canales = self.separar_canales()
         bn_node = self.escala_grises()
@@ -376,7 +466,8 @@ class VisionNode:
             ax.axis("off")
 
         plt.tight_layout()
-        plt.show()
+        plt.show(block=block)
+        return self
 
 
 # ==========================================
@@ -384,40 +475,35 @@ class VisionNode:
 # ==========================================
 def demo_pipeline():
     """Ejecuta un pequeño demo usando imágenes de muestra si están disponibles."""
-    try:
-        fotos = {
-            "torax": get_image_path("toraxP2.bmp"),
-            "arco": get_image_path("arco1.bmp"),
-            "tumba": get_image_path("nd5.bmp"),
-            "fondo": get_image_path("fondo_negro.jpeg"),
-            "ventana": get_image_path("louvre4.bmp"),
-            "taller": get_image_path("taller1.jpg"),
-            "infra": get_image_path("infrarrojo/arteriesMIR.jpg"),
-        }
+    fotos = {
+        "torax": get_image_path("toraxP2.bmp"),
+        "arco": get_image_path("arco1.bmp"),
+        "tumba": get_image_path("nd5.bmp"),
+        "fondo": get_image_path("fondo_negro.jpeg"),
+        "ventana": get_image_path("louvre4.bmp"),
+        "taller": get_image_path("taller1.jpg"),
+        "infra": get_image_path("infrarrojo/arteriesMIR.jpg"),
+    }
 
-        mi_imagen_path = fotos.get("infra")
-        if not mi_imagen_path or not mi_imagen_path.exists():
-            log.warning("No se encontró la imagen de prueba para el demo.")
-            return
+    mi_imagen_path = fotos.get("infra")
+    if not mi_imagen_path or not mi_imagen_path.exists():
+        log.warning("No se encontró la imagen de prueba para el demo.")
+        return
 
-        img_original = VisionNode.desde_archivo(mi_imagen_path)
-        img_original.mostrar(block=False)
+    img_original = VisionNode.desde_archivo(mi_imagen_path)
+    img_original.mostrar(block=False)
 
-        # Pipeline de transformaciones
-        img_expo = img_original.transformacion_gamma(0.5)
-        img_expo.mostrar(block=False)
+    img_expo = img_original.transformacion_gamma(0.5)
+    img_expo.mostrar(block=False)
 
-        img_estirada = img_original.estirar_contraste()
-        img_estirada.mostrar(block=False)
+    img_estirada = img_original.estirar_contraste()
+    img_estirada.mostrar(block=False)
 
-        img_ir_termica = img_original.pseudocolor_infrarrojo()
-        img_ir_termica.mostrar(block=False)
+    img_ir_termica = img_original.pseudocolor_infrarrojo()
+    img_ir_termica.mostrar(block=False)
 
-        log.info("Demo finalizado. Esperando a que se cierren las ventanas...")
-        plt.show()
-
-    except Exception as e:
-        log.error(f"Error en la ejecución del demo: {e}")
+    log.info("Demo finalizado. Esperando a que se cierren las ventanas...")
+    plt.show()
 
 if __name__ == "__main__":
     demo_pipeline()

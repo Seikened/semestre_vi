@@ -1,20 +1,18 @@
-import os
 import sys
+from pathlib import Path
 from typing import Self
 
-import matplotlib.pyplot as plt
-import numpy as np
-import torch
-from colorstreak import Logger as log
+# Asegurar que el root del proyecto esté en sys.path ANTES de importar el paquete
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
-# Importamos la clase base que modificamos previamente para soportar herencia fluida
-from image_processing.vision_node import VisionNode, get_image_path, tag
+import matplotlib.pyplot as plt  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from colorstreak import Logger as log  # noqa: E402
 
-# Ensure the project root is in sys.path so direct executions can find the 'image_processing' module
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
+from image_processing.vision_node import VisionNode, get_image_path, tag  # noqa: E402
 
 
 """
@@ -271,48 +269,27 @@ class DynamicVisionNode(VisionNode):
 # Pruebas / Demo
 # ==========================================
 def demo_ajustes_dinamicos():
-    try:
-        # Usamos una imagen que tenga zonas muy oscuras para probar
-        #img_path = get_image_path("louvre5.bmp")
-        img_path = get_image_path("taller1.jpg")
-        if not img_path.exists():
-            log.warning("No se encontró la imagen de prueba.")
-            return
+    img_path = get_image_path("taller1.jpg")
+    if not img_path.exists():
+        log.warning("No se encontró la imagen de prueba.")
+        return
 
-        # Cargamos como VisionNode y lo convertimos a DynamicVisionNode
-        base_node = VisionNode.desde_archivo(img_path)
-        dyn_node = DynamicVisionNode.desde_nodo(base_node)
+    # La factory heredada de VisionNode usa `cls(...)` → devuelve un DynamicVisionNode.
+    dyn_node = DynamicVisionNode.desde_archivo(img_path)
+    dyn_node.title = "Original"
 
-        # 1. Mostramos la original
-        dyn_node.title = "Original"
+    img_b_n = dyn_node.escala_grises()
+    img_b_n.mostrar(block=False)
+    img_b_n.histograma(block=False)
+    img_b_n.graficar_acumulado("Antes")
 
-        # 2. Aplicamos Ecualización de Histograma a una imagen en B/N para mejor visibilidad
-        img_b_n = dyn_node.escala_grises()
-        img_b_n.mostrar(block=False)
-        img_b_n.histograma(block=False)
-        img_b_n.graficar_acumulado("Antes")
+    img_ecualizada = img_b_n.ecualizar()
+    img_ecualizada.mostrar(block=False)
+    img_ecualizada.histograma(block=False)
+    img_ecualizada.graficar_acumulado("Después")
 
-        # 3. Aplicamos Ajuste Dinámico (Mejorar negros)
-        # Puntos: (0, 100, 157, 255) -> (0, 0, 255, 255)
-        #x_pts = (0, 100, 157, 255)
-        #y_pts = (0, 0, 255, 255)
-
-        #img_ajustada = img_b_n.transformacion_lineal(entrada=x_pts, salida=y_pts)
-        #img_ajustada.mostrar(block=False)
-
-        # 4. Aplicamos Ecualización de Histograma
-        img_ecualizada = img_b_n.ecualizar()
-        img_ecualizada.mostrar(block=False)
-        img_ecualizada.histograma(block=False)
-        img_ecualizada.graficar_acumulado("Después")
-
-        log.info("Demo de ajustes dinámicos completado. Cierra las ventanas para finalizar.")
-        plt.show()
-
-    except Exception as e:
-        log.error(f"Error en el demo: {e}")
-
-
+    log.info("Demo de ajustes dinámicos completado. Cierra las ventanas para finalizar.")
+    plt.show()
 
 
 if __name__ == "__main__":

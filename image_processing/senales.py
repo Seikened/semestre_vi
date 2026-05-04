@@ -162,12 +162,81 @@ class SignalVisionNode(DynamicVisionNode):
         return np.arange(inicio, magnitud.size), magnitud[inicio:]
 
     @staticmethod
-    def _dft_magnitud_log(canal_np: np.ndarray) -> np.ndarray:
-        """DFT 2D centrada en escala log normalizada a [0,1] para visualización."""
+    def _dft_magnitud_log(canal_np: np.ndarray, radio_dc: int = 0,
+                           clip_percentil: float = 100.0) -> np.ndarray:
+        """
+        DFT 2D centrada en escala log normalizada a [0,1] para visualización.
+
+        Args:
+            radio_dc:       Si > 0, suprime el DC (y baja frecuencia hasta ese
+                            radio en píxeles) poniéndolo a 0. Útil para que los
+                            picos del patrón no queden aplastados por el brillo
+                            del DC.
+            clip_percentil: Percentil de normalización. 100.0 = normaliza al
+                            máximo (comportamiento clásico). Valores menores
+                            (p.ej. 99.5) realzan el contraste de los picos.
+        """
         espectro = np.fft.fftshift(np.fft.fft2(canal_np))
         magnitud = np.log1p(np.abs(espectro))
-        pico = magnitud.max()
-        return magnitud / pico if pico > 0 else magnitud
+
+        if radio_dc > 0:
+            H, W = magnitud.shape
+            cy, cx = H // 2, W // 2
+            yy, xx = np.ogrid[:H, :W]
+            mascara_dc = (yy - cy) ** 2 + (xx - cx) ** 2 <= radio_dc ** 2
+            magnitud = magnitud.copy()
+            magnitud[mascara_dc] = 0
+
+        if clip_percentil >= 100.0:
+            pico = magnitud.max()
+        else:
+            pico = np.percentile(magnitud, clip_percentil)
+
+        if pico > 0:
+            return np.clip(magnitud / pico, 0.0, 1.0)
+        return magnitud
+
+    @staticmethod
+    def _detectar_picos_espectro(canal_np: np.ndarray, n_picos: int = 6,
+                                  excluir_radio_dc: int = 20,
+                                  ventana_supresion: int = 10
+                                  ) -> list[tuple[int, int, float]]:
+        """
+        Detecta los N picos más prominentes del espectro 2D centrado.
+
+        Algoritmo greedy: encuentra el máximo, lo registra, suprime su vecindad
+        (para no contar el mismo pico dos veces), y repite. Excluye una zona
+        circular alrededor del DC (baja frecuencia) que normalmente no es
+        de interés para identificar patrones periódicos.
+
+        Returns:
+            Lista de tuplas (u, v, |F|) en coordenadas absolutas del espectro
+            shifteado (fila v, columna u). Para coordenadas relativas al DC,
+            restar (cx, cy) en el llamador.
+        """
+        espectro = np.fft.fftshift(np.fft.fft2(canal_np))
+        magnitud = np.abs(espectro)
+
+        H, W = magnitud.shape
+        cy, cx = H // 2, W // 2
+
+        yy, xx = np.ogrid[:H, :W]
+        mascara_dc = (yy - cy) ** 2 + (xx - cx) ** 2 <= excluir_radio_dc ** 2
+
+        busqueda = magnitud.copy()
+        busqueda[mascara_dc] = -1.0
+
+        picos: list[tuple[int, int, float]] = []
+        for _ in range(n_picos):
+            idx = int(np.argmax(busqueda))
+            v, u = np.unravel_index(idx, busqueda.shape)
+            if busqueda[v, u] < 0:
+                break
+            picos.append((int(u), int(v), float(magnitud[v, u])))
+            ventana = (yy - v) ** 2 + (xx - u) ** 2 <= ventana_supresion ** 2
+            busqueda[ventana] = -1.0
+
+        return picos
 
     # ──────────────────────────────────────────────────────────
     # Convolución
@@ -264,6 +333,115 @@ class SignalVisionNode(DynamicVisionNode):
         size = self._validar_size(size)
         return self.convolucion_separable(self._kernel_gaussiano_1d(size, sigma),
                                           f"Gaussiano {size}x{size}")
+
+    @tag(tipo="transformacion",
+         hace="Filtro de mediana en forma de cruz (ejes cardinales, 2s-1 muestras).",
+         depende_de=("tensor", "F.pad", "F.unfold", "_aplicar_por_canal"))
+    def mediana_cruz(self, size: int = 5) -> Self:
+        """
+        Mediana con máscara en cruz (+): solo la fila y columna centrales de la
+        vecindad `size x size`. Muestrea 2·size - 1 pixeles en vez de size².
+
+        Ventajas sobre la mediana cuadrada:
+          - Más rápida: ~(2s-1)/s² muestras (para size=5, ~36% del trabajo).
+          - Preserva mejor detalles diagonales (esquinas en 45°).
+        Sigue siendo efectiva contra sal y pimienta aleatoria, porque el
+        impulso aislado tiene vecinos sanos en los 4 ejes cardinales.
+        """
+        size = self._validar_size(size)
+        pad = size // 2
+        centro = size // 2
+
+        indices_fila     = [centro * size + j for j in range(size)]
+        indices_columna  = [i * size + centro for i in range(size) if i != centro]
+        indices_cruz     = sorted(indices_fila + indices_columna)
+        indices_tensor   = torch.tensor(indices_cruz, device=self.tensor.device)
+
+        def aplicar(canal: torch.Tensor) -> torch.Tensor:
+            con_padding = F.pad(canal.unsqueeze(0), (pad, pad, pad, pad), mode="reflect")
+            parches = F.unfold(con_padding, kernel_size=size)        # (1, s², H·W)
+            parches_cruz = parches.index_select(dim=1, index=indices_tensor)  # (1, 2s-1, H·W)
+            medianas = parches_cruz.median(dim=1).values
+            return medianas.view(1, self.height, self.width)
+
+        resultado = self._aplicar_por_canal(aplicar)
+        return self.__class__(resultado,
+                              title=f"Mediana cruz ({size}) de {self.title}")
+
+    @tag(tipo="transformacion",
+         hace="Filtro de mediana (no lineal) por canal vía F.unfold.",
+         depende_de=("tensor", "F.pad", "F.unfold", "_aplicar_por_canal"))
+    def mediana(self, size: int = 3) -> Self:
+        """
+        Filtro de mediana: por cada pixel toma el valor mediano de su vecindad
+        `size x size`. No es lineal (no se puede expresar como convolución) y
+        es excelente contra ruido impulsivo (sal y pimienta), porque los
+        valores extremos 0/1 son descartados por la mediana.
+        """
+        size = self._validar_size(size)
+        pad = size // 2
+
+        def aplicar(canal: torch.Tensor) -> torch.Tensor:
+            con_padding = F.pad(canal.unsqueeze(0), (pad, pad, pad, pad), mode="reflect")
+            parches = F.unfold(con_padding, kernel_size=size)        # (1, s², H·W)
+            medianas = parches.median(dim=1).values                   # (1, H·W)
+            return medianas.view(1, self.height, self.width)
+
+        resultado = self._aplicar_por_canal(aplicar)
+        return self.__class__(resultado,
+                              title=f"Mediana ({size}x{size}) de {self.title}")
+
+    @tag(tipo="transformacion",
+         hace="Filtro sigma preservador de bordes (Lee, 1983) vía integral image.",
+         depende_de=("tensor", "F.pad", "gaussiano"))
+    def filtro_sigma(self, size: int = 5, sigma: float = 10.0) -> Self:
+        """
+        Filtro adaptativo por varianza local (Lee, 1983) — preserva bordes.
+
+        Para cada pixel, mide la desviación estándar local en una vecindad de
+        `size x size`. Si la señal local es plana (σ_local ≤ σ) se considera
+        ruido y se aplica suavizado; si es alta (σ_local > σ) se considera
+        borde y se respeta el pixel original. Se usa una mezcla suave:
+            α       = clamp(σ² / σ_local²,  0, 1)
+            salida  = α · suavizado + (1 - α) · original
+
+        Implementación O(1) por pixel usando integral image para μ y μ₂,
+        de donde σ_local² = μ₂ - μ².
+
+        Args:
+            size:  tamaño impar de la vecindad.
+            sigma: desviación estándar umbral (en escala 0-255).
+        """
+        size = self._validar_size(size)
+        sigma_norm = sigma / INTENSIDAD_MAX
+        var_umbral = sigma_norm * sigma_norm
+
+        pad = size // 2
+        area = size * size
+        _, alto, ancho = self.tensor.shape
+
+        padded = F.pad(self.tensor, (pad, pad, pad, pad), mode="reflect")
+
+        # Integral images de x y de x² para obtener μ y μ₂ en O(1)
+        integral   = F.pad(padded.cumsum(-1).cumsum(-2),        (1, 0, 1, 0))
+        integral_2 = F.pad((padded ** 2).cumsum(-1).cumsum(-2), (1, 0, 1, 0))
+
+        def suma_bloque(tabla):
+            return (tabla[:, size:size + alto, size:size + ancho]
+                    - tabla[:, :alto,           size:size + ancho]
+                    - tabla[:, size:size + alto, :ancho]
+                    + tabla[:, :alto,           :ancho])
+
+        media_local = suma_bloque(integral)   / area
+        media_cuad  = suma_bloque(integral_2) / area
+        var_local   = (media_cuad - media_local ** 2).clamp_min(0.0)
+
+        alpha = (var_umbral / (var_local + 1e-12)).clamp(0.0, 1.0)
+        resultado = alpha * media_local + (1.0 - alpha) * self.tensor
+        resultado = resultado.clamp(0.0, 1.0)
+
+        return self.__class__(resultado,
+                              title=f"Sigma (k={size}, σ={sigma:g}) de {self.title}")
 
     # ──────────────────────────────────────────────────────────
     # Visualización: señal 1D + FFT por canal (con slider y lupa)
@@ -543,6 +721,87 @@ class SignalVisionNode(DynamicVisionNode):
         plt.show(block=block)
         return self
 
+    @tag(tipo="grafica",
+         hace="DFT 2D con los N picos más prominentes marcados y anotados (du, dv, periodo).",
+         depende_de=("tensor", "is_grayscale"))
+    def espectro_2d_picos(self, n_picos: int = 6, excluir_radio_dc: int = 20,
+                           ventana_supresion: int = 10, radio_marcador: int = 12,
+                           radio_dc_visual: int = 5, clip_percentil: float = 99.5,
+                           block: bool = False) -> Self:
+        """
+        Muestra el espectro 2D con los picos más prominentes resaltados.
+
+        Útil para identificar componentes periódicos (p.ej. el patron de un componente 
+        repetido en una imagen). Cada pico se anota con sus coordenadas relativas al DC
+        (du, dv) y el periodo espacial estimado en píxeles.
+
+        Args:
+            n_picos:           Número de picos a buscar por canal.
+            excluir_radio_dc:  Radio (px) alrededor del DC excluido de la búsqueda.
+            ventana_supresion: Radio (px) de supresión no-máxima alrededor de cada pico.
+            radio_marcador:    Radio (px) del círculo dibujado sobre cada pico.
+            radio_dc_visual:   Radio (px) del DC suprimido para la visualización.
+            clip_percentil:    Percentil de normalización para realzar contraste.
+            block:             Si True, bloquea hasta cerrar la ventana.
+        """
+        canales = self._canales_para_dft()
+        ax_imagen, ejes_dft, fig = self._crear_layout_dft(len(canales))
+
+        ax_imagen.imshow(self._imagen_para_imshow(), cmap=self._cmap_imagen, vmin=0, vmax=1)
+        ax_imagen.set_title(self.title, fontsize=11)
+        ax_imagen.axis("off")
+
+        for ax, canal in zip(ejes_dft, canales):
+            canal_np = self.tensor[canal.indice].cpu().numpy()
+
+            magnitud_vis = self._dft_magnitud_log(
+                canal_np, radio_dc=radio_dc_visual, clip_percentil=clip_percentil)
+            ax.imshow(magnitud_vis, cmap=canal.color, vmin=0, vmax=1)
+            ax.set_title(f"DFT 2D — Canal {canal.nombre}", fontsize=11)
+            ax.axis("off")
+
+            picos = self._detectar_picos_espectro(
+                canal_np, n_picos=n_picos,
+                excluir_radio_dc=excluir_radio_dc,
+                ventana_supresion=ventana_supresion)
+
+            self._anotar_picos(ax, picos, magnitud_vis.shape, canal.nombre,
+                                radio_marcador=radio_marcador)
+
+        fig.suptitle(f"Picos espectrales: {self.title}", fontsize=13, weight="bold")
+        plt.tight_layout(rect=(0, 0, 1, 0.95))
+        plt.show(block=block)
+        return self
+
+    @staticmethod
+    def _anotar_picos(ax, picos: list[tuple[int, int, float]],
+                       forma: tuple[int, int], nombre_canal: str,
+                       radio_marcador: int = 12) -> None:
+        """Dibuja círculos y etiquetas sobre los picos detectados."""
+        H, W = forma
+        cy, cx = H // 2, W // 2
+
+        for i, (u, v, mag) in enumerate(picos, start=1):
+            ax.add_patch(plt.Circle((u, v), radio_marcador,
+                                     fill=False, ec="red", lw=1.5))
+
+            du, dv = u - cx, v - cy
+            fx = du / W
+            fy = dv / H
+            freq_total = (fx * fx + fy * fy) ** 0.5
+            periodo = 1.0 / freq_total if freq_total > 0 else float("inf")
+
+            etiqueta = f"#{i}\n({du:+d},{dv:+d})\nT≈{periodo:.1f}px"
+            ax.annotate(etiqueta, (u, v),
+                        xytext=(radio_marcador + 2, radio_marcador + 2),
+                        textcoords="offset points",
+                        fontsize=7, color="red",
+                        bbox=dict(boxstyle="round,pad=0.25",
+                                   fc="white", ec="red", alpha=0.85))
+
+            log.info(f"{nombre_canal} pico #{i}: (du={du:+d}, dv={dv:+d}), "
+                    f"|F|={mag:.0f}, periodo≈{periodo:.1f} px")
+
     def _crear_layout_dft(self, _n_canales: int):
         """Devuelve (ax_imagen, [ax_dft...], fig) según si es grayscale o color."""
         if self.is_grayscale:
@@ -559,41 +818,23 @@ class SignalVisionNode(DynamicVisionNode):
 # Demo / Test
 # ==========================================
 def demo_senales():
-    try:
-        # img_path = get_image_path("golf.bmp")
-        img_path = get_image_path("texto.bmp")
-        # img_path = get_image_path("patrones/senoidal.bmp")
-        if not img_path.exists():
-            log.warning("No se encontró la imagen de prueba.")
-            return
+    img_path = get_image_path("saco_doble_lampara.bmp")
+    if not img_path.exists():
+        log.warning("No se encontró la imagen de prueba.")
+        return
 
-        base = SignalVisionNode.desde_archivo(img_path)
-        base.title = "Original"
-        base.mostrar(block=False)
+    base = SignalVisionNode.desde_archivo(img_path)
+    base.title = "Original"
+    base.mostrar(block=False)
 
-        log.step("1. Señal por canal (fila central)...")
-        base.senal_por_canal()
+    log.step("1. Señal por canal (fila central)...")
+    base.senal_por_canal()
 
-        log.step("2. Transformada de Fourier 2D...")
-        base.transformada_fourier_2d()
+    log.step("2. Transformada de Fourier 2D...")
+    base.transformada_fourier_2d()
 
-        log.step("3. Filtros: suavizado, gaussiano...")
-        size = 11
-        base_suavizado = base.suavizar(size=size)
-        base_suavizado.mostrar(block=False)
-
-        base_gaussiano = base.gaussiano(size=size)
-        base_gaussiano.mostrar(block=False)
-
-        base_gaussiano.transformada_fourier_2d(block=False)
-        base_gaussiano.senal_por_canal(block=False)
-        base_gaussiano.comparar_fft(base_suavizado, block=False)
-
-        log.info("Demo completo. Cierra las ventanas para finalizar.")
-        plt.show()
-
-    except Exception as e:
-        log.error(f"Error en el demo: {e}")
+    log.info("Demo completo. Cierra las ventanas para finalizar.")
+    plt.show()
 
 
 if __name__ == "__main__":
