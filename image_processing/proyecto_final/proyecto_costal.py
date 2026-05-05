@@ -13,31 +13,32 @@ from colorstreak import Logger as log  # noqa: E402
 from image_processing import DerivativeVisionNode  # noqa: E402
 
 from notch import (  # noqa: E402
-    detectar_picos_eje_h,
+    detectar_picos_ambos_ejes,
     aplicar_notch_adaptativo,
     mostrar_mascara_notch_adaptativo,
+    comparar_espectros_filtro,
 )
 
 
 """
-Proyecto: Eliminación del patrón de tejido en una imagen de costal
-------------------------------------------------------------------
-Implementa el flujo de tres fases que recomienda Gonzalez (Digital Image
-Processing) para limpiar texto sobre superficie tejida:
+Proyecto: Filtrado de ruido en imágenes de sacos
+------------------------------------------------
+Requisito del profesor:
+    "Procesar imágenes de impresión en sacos como un paso previo a la
+    inspección. Eliminar la información del tejido y las manchas pequeñas,
+    pero conservando la información del texto."
 
-    1. Notch reject filter en frecuencia → elimina la trama periódica.
-    2. Umbralización local por promedios móviles (n = 5 × ancho de trazo)
-       → separa texto de iluminación dispareja del costal.
-    3. Median filter pequeño → limpia puntos espurios sin desenfocar.
+Objetivo: imagen ORIGINAL en grises sin patrón del tejido y sin manchas
+chicas. NO es binarización (no es detección de bordes), es la misma imagen
+con la trama removida.
 
-Aquí usamos AGNF lite (Adaptive Gaussian Notch Filter) en la fase 1:
-detección selectiva de picos en el eje horizontal del espectro con
-threshold relativo y σ adaptativo por pico (FWHM/2.355). Esto mata
-exactamente las frecuencias del tejido y deja intactas las de letras
-y bordes.
+Flujo (siguiendo Gonzalez):
+    1. AGNF en ambos ejes — quita la trama tejida (vertical + horizontal).
+    2. Median pequeño — limpia manchas espurias (sal y pimienta).
+    3. Resultado: imagen continua en grises, sin tejido, lista para inspección.
 
-Flujo (main):
-    cargar → inspeccionar_patron → extraer_texto_gonzalez → comparar
+(Opcional) Binarización adaptativa solo como vista de extracción de texto
+para análisis tipo OCR — no es la salida principal del proyecto.
 """
 
 
@@ -48,36 +49,31 @@ Flujo (main):
 IMAGEN = aqui / "saco_doble_lampara.bmp"
 TITULO = "Saco — original"
 
-# Visualización del patrón (solo para inspección, pasos 2 y 3 del flujo)
+# Visualización del patrón (solo para inspección inicial)
 PARAMS_PICOS_VIS = {
     "n_picos": 8,
     "excluir_radio_dc": 30,
     "ventana_supresion": 15,
 }
 
-# FASE 1 — Detección selectiva de picos del tejido (AGNF lite)
-# Hallazgos del análisis radial:
-#   - r < 100: contenido legítimo (texto grande, marco, escudo).
-#               Picos en r=21,28,49 con |F|=30k-60k son LETRAS, no tejido.
-#   - r > 100: tejido domina. Picos en r=119,180,209,415,600 con
-#               |F|=4k-12k son armónicas reales del tejido.
-# Por eso min_radio=100: ignoramos los picos de las letras grandes y
-# atacamos solo la cola armónica del tejido.
+# AGNF — detección selectiva en AMBOS ejes
+# min_radio=100 evita atrapar picos del contenido legítimo (texto grande,
+# marco, escudo) que viven cerca del DC. El tejido vive más afuera.
 PARAMS_AGNF = {
-    "umbral_relativo": 0.05,   # ≥5% del pico máximo del eje H
-    "distancia_min":   6,       # px entre picos consecutivos
-    "banda_v":         2,       # franja ±2 px alrededor de v=0
-    "min_radio":       100,     # excluir letras grandes y marco
+    "umbral_relativo": 0.05,    # ≥5% del pico máximo del eje
+    "distancia_min":   6,        # px entre picos
+    "banda_v":         2,        # franja ±2 px alrededor del eje
+    "min_radio":       100,      # ignora zona dominada por contenido
 }
 
-# FASE 2 — Binarización adaptativa
+# Median post-AGNF (sobre imagen continua, no binarizada)
+MEDIAN_SIZE = 5
+
+# Visualización opcional con binarización adaptativa
 # Regla Gonzalez: kernel = 5 × ancho de trazo de las letras.
-# Ancho de trazo en este costal: ~12 px → kernel ≈ 60. Redondeado a impar.
 ANCHO_TRAZO_PX = 12
 C_BINARIZ = 0.05
-
-# FASE 3 — Median post-binarización (5×5 limpia mejor el ruido residual)
-MEDIAN_SIZE = 5
+MOSTRAR_BINARIZACION_OPCIONAL = True
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -92,10 +88,7 @@ def cargar_costal_grises(path, titulo):
 
 
 def inspeccionar_patron(img, params_picos):
-    """
-    Visualizaciones para identificar las frecuencias del tejido.
-    Útil para confirmar dónde están los picos antes del filtrado.
-    """
+    """Visualizaciones para identificar las frecuencias del tejido."""
     log.step("Señal 1D + FFT por fila (slider)")
     img.senal_por_canal(block=False)
 
@@ -106,64 +99,58 @@ def inspeccionar_patron(img, params_picos):
     img.espectro_2d_con_perfiles(**params_picos, escala_perfiles="log", block=False)
 
 
-def extraer_texto_gonzalez(img, params_agnf, ancho_trazo_px, c_binariz, median_size):
+def filtrar_tejido(img, params_agnf, median_size):
     """
-    Pipeline de Gonzalez en 3 fases:
+    Pipeline principal: AGNF en ambos ejes + median.
 
-        FASE 1: AGNF (detección selectiva eje H + σ adaptativo) → quita tejido.
-        FASE 2: binarización adaptativa con kernel = 5 × ancho_trazo_px → texto.
-        FASE 3: median size×size → limpia puntos espurios.
-
-    Returns:
-        (img_notch, img_binaria, img_final, picos_detectados)
+    Salida: imagen en grises sin tejido y sin manchas pequeñas.
+    Mantiene los tonos originales (no es binarización).
     """
     canal = img.tensor[0].cpu().numpy()
 
-    # ── FASE 1 — AGNF lite ──
-    log.step("FASE 1: detectando picos del tejido (AGNF, eje horizontal)")
-    picos = detectar_picos_eje_h(canal, **params_agnf)
-    log.info(f"   {len(picos)} picos detectados")
-    for i, (u, v, mag, sigma) in enumerate(picos[:8], start=1):
-        cy, cx = canal.shape[0] // 2, canal.shape[1] // 2
-        log.info(f"     #{i}: du={u-cx:+5d}, dv={v-cy:+3d}, |F|={mag:.0f}, σ={sigma:.1f}")
-    if len(picos) > 8:
-        log.info(f"     ... y {len(picos) - 8} más")
+    log.step("Fase 1: detectando picos del tejido (eje H + eje V)")
+    picos = detectar_picos_ambos_ejes(canal, **params_agnf)
+    n_h = sum(1 for u, v, _, _ in picos if abs(v - canal.shape[0] // 2) <= params_agnf["banda_v"])
+    n_v = len(picos) - n_h
+    log.info(f"   Total: {len(picos)} picos  (eje H: {n_h}, eje V: {n_v})")
 
-    log.step("Mostrando máscara AGNF")
-    mostrar_mascara_notch_adaptativo(canal.shape, picos, block=False)
+    log.step("Análisis frecuencial: |F| antes / máscara / |F·H| después + perfiles 1D")
+    comparar_espectros_filtro(canal, picos, banda=params_agnf["banda_v"], block=False)
 
     log.step("Aplicando AGNF (FFT → ×H → IFFT)")
     img_notch = aplicar_notch_adaptativo(img, picos)
-    img_notch.title = "Fase 1: tejido removido"
-    img_notch.mostrar(block=False)
+    img_notch.title = "Sin tejido (AGNF)"
 
-    # ── FASE 2 — Binarización adaptativa ──
+    log.step(f"Median {median_size}×{median_size} sobre la imagen continua")
+    img_limpia = img_notch.mediana(size=median_size)
+    img_limpia.title = "Sin tejido + sin manchas (RESULTADO)"
+
+    return img_limpia, img_notch, picos
+
+
+def comparar_resultado(img_orig, img_limpia, params_picos):
+    """Joint plot DESPUÉS y mapa de diferencias para validar."""
+    log.step("Joint plot DESPUÉS — eje del tejido debería estar oscuro")
+    img_limpia.espectro_2d_con_perfiles(**params_picos,
+                                         escala_perfiles="lineal",
+                                         block=False)
+
+    log.step("Mapa de diferencias |original − limpia| × 5")
+    img_orig.mostrar_diferencias(img_limpia, magnifier=5.0, block=False)
+
+
+def vista_opcional_binarizacion(img_limpia, ancho_trazo_px, c_binariz):
+    """
+    Vista opcional para extracción de texto (post-procesamiento OCR).
+    NO es el output principal del proyecto — solo demostración.
+    """
     kernel = max(3, int(round(5 * ancho_trazo_px)))
     if kernel % 2 == 0:
         kernel += 1
-    log.step(f"FASE 2: binarización adaptativa (kernel={kernel} = 5 × {ancho_trazo_px}px de trazo)")
-    img_binaria = img_notch.binarizar_adaptativo(kernel_size=kernel, c=c_binariz)
-    img_binaria.title = "Fase 2: texto binarizado"
-    img_binaria.mostrar(block=False)
-
-    # ── FASE 3 — Median ──
-    log.step(f"FASE 3: median {median_size}×{median_size} (limpia puntos espurios)")
-    img_final = img_binaria.mediana(size=median_size)
-    img_final.title = "Fase 3: texto limpio (resultado final)"
-    img_final.mostrar(block=False)
-
-    return img_notch, img_binaria, img_final, picos
-
-
-def comparar_resultado(img_orig, img_notch, params_picos):
-    """Joint plot DESPUÉS y mapa de diferencias para validar el filtrado."""
-    log.step("Joint plot DESPUÉS del notch (los picos del tejido deberían haberse ido)")
-    img_notch.espectro_2d_con_perfiles(**params_picos,
-                                        escala_perfiles="lineal",
-                                        block=False)
-
-    log.step("Mapa de diferencias |original − notch| × 5")
-    img_orig.mostrar_diferencias(img_notch, magnifier=5.0, block=False)
+    log.step(f"(Opcional) Binarización adaptativa kernel={kernel} = 5 × {ancho_trazo_px}px")
+    img_bin = img_limpia.binarizar_adaptativo(kernel_size=kernel, c=c_binariz)
+    img_bin.title = "(Vista opcional) Texto binarizado para OCR"
+    img_bin.mostrar(block=False)
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -177,14 +164,54 @@ def main():
 
     img = cargar_costal_grises(IMAGEN, TITULO)
     img.mostrar(block=False)
+    
+    
+    img_fitro_mediana = img.mediana(size=MEDIAN_SIZE)
+    img_fitro_mediana.title = f"Filtro de mediana {MEDIAN_SIZE}×{MEDIAN_SIZE} sobre imagen original (sin AGNF)"
+    img_fitro_mediana.mostrar(block=False)
 
-    inspeccionar_patron(img, PARAMS_PICOS_VIS)
+    # ── High-boost (Gonzalez) sobre la imagen ORIGINAL ──────
+    # Convención clásica:  g(x,y) = f(x,y) − k · ∇²f(x,y)
+    # El Laplaciano (∇²) detecta bordes (cambios bruscos). Restarlo a la
+    # original AMPLIFICA los bordes — texto, escudo y marco más nítidos.
+    #
+    # Sentido del parámetro k:
+    #   k = 1.0 → boost base (unsharp masking estándar).
+    #   k > 1   → MÁS realce (bordes más marcados, también ruido).
+    #   k < 1   → MENOS realce (más suave).
+    #
+    # OJO sobre la imagen original: el Laplaciano también detecta los
+    # bordes locales del tejido → high-boost amplifica el tejido.
+    # Por eso conviene aplicarlo sobre una imagen ya suavizada (mediana).
+    k = 1.0
+    log.step(f"High-boost (k={k}) sobre imagen ORIGINAL")
+    lap_orig = img.laplaciano(extendido=True, crudo=True)
+    img_boost = (img - lap_orig * k).clip()
+    img_boost.title = f"High-boost (k={k}) sobre original"
+    img_boost.mostrar(block=False)
 
-    img_notch, _img_bin, _img_final, _ = extraer_texto_gonzalez(
-        img, PARAMS_AGNF, ANCHO_TRAZO_PX, C_BINARIZ, MEDIAN_SIZE,
-    )
+    # ── Mediana 3×3 + High-boost (Gonzalez fase 3 + fase 4) ──
+    # La mediana primero LIMPIA el tejido (ya no genera bordes locales),
+    # y luego el high-boost realza los bordes que SOBREVIVEN — los del
+    # texto y escudo. Es el flujo correcto cuando el ruido no es periódico.
+    log.step(f"Mediana 3×3 → High-boost (k={k}) sobre el resultado")
+    img_med3 = img.mediana(size=3)
+    lap_med3 = img_med3.laplaciano(extendido=True, crudo=True)
+    img_med_boost = (img_med3 - lap_med3 * k).clip()
+    img_med_boost.title = f"Mediana 3 + High-boost (k={k}) — texto realzado, sin tejido"
+    img_med_boost.mostrar(block=False)
 
-    comparar_resultado(img, img_notch, PARAMS_PICOS_VIS)
+    # inspeccionar_patron(img, PARAMS_PICOS_VIS)
+
+    # img_limpia, img_notch, _ = filtrar_tejido(img, PARAMS_AGNF, MEDIAN_SIZE)
+
+    # log.step("RESULTADO: imagen sin tejido (continua, no binarizada)")
+    # img_limpia.mostrar(block=False)
+
+    # comparar_resultado(img, img_limpia, PARAMS_PICOS_VIS)
+
+    # if MOSTRAR_BINARIZACION_OPCIONAL:
+    #     vista_opcional_binarizacion(img_limpia, ANCHO_TRAZO_PX, C_BINARIZ)
 
     log.info("Cierra las ventanas para finalizar.")
     plt.show()

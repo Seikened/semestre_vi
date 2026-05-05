@@ -78,7 +78,7 @@ class NoiseVisionNode(SignalVisionNode):
 # Pruebas / Demo
 # ==========================================
 def demo_ruido():
-    img_path = get_image_path("saco_doble_lampara.bmp")
+    img_path = get_image_path("golf.bmp")
     if not img_path.exists():
         log.warning("No se encontró la imagen de prueba.")
         return
