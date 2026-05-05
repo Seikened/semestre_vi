@@ -443,6 +443,33 @@ class SignalVisionNode(DynamicVisionNode):
         return self.__class__(resultado,
                               title=f"Sigma (k={size}, σ={sigma:g}) de {self.title}")
 
+    @tag(tipo="transformacion",
+         hace="Mezcla original ↔ filtrada según |orig-filt| > umbral. Preserva detalle.",
+         depende_de=("tensor",))
+    def filtro_umbral(self, filtrada: "SignalVisionNode", umbral: float = 0.15) -> Self:
+        """
+        Filtro selectivo: usa la versión filtrada solo donde la diferencia con
+        el original supera `umbral`; el resto del pixel queda intacto.
+
+            donde |orig - filtrada| > umbral  →  filtrada
+            en el resto                       →  orig
+
+        Idea: suavizar zonas con ruido pero preservar bordes y detalle fino,
+        donde el filtro liso destruiría información.
+
+        Args:
+            filtrada: Nodo con la imagen ya filtrada (mediana, gauss, etc.).
+            umbral:   En escala 0-1. ~0.15 equivale a ~38/255.
+        """
+        if filtrada.tensor.shape != self.tensor.shape:
+            raise ValueError(
+                f"Shape incompatible: {filtrada.tensor.shape} vs {self.tensor.shape}")
+        diff = (self.tensor - filtrada.tensor).abs()
+        mascara = diff > umbral
+        resultado = torch.where(mascara, filtrada.tensor, self.tensor)
+        return self.__class__(resultado,
+                              title=f"Filtro umbral (th={umbral:g}) de {self.title}")
+
     # ──────────────────────────────────────────────────────────
     # Visualización: señal 1D + FFT por canal (con slider y lupa)
     # ──────────────────────────────────────────────────────────

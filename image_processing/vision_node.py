@@ -102,6 +102,31 @@ class VisionNode:
     def __neg__(self) -> Self:
         return self.__class__(-self.tensor, title=f"(-{self.title})")
 
+    @tag(tipo="utilidad",
+         hace="Promedio aritmético entre self y una lista de nodos del mismo shape.",
+         depende_de=("tensor",))
+    def promediar(self, otros: list["VisionNode"]) -> Self:
+        """
+        Promedia self con N nodos adicionales (mismo shape):
+            salida = (self + Σ otros) / (1 + N)
+
+        Útil para reducir ruido por integración temporal — técnica clásica en
+        astronomía y microscopía cuando la señal es estática y el ruido es
+        independiente entre tomas.
+        """
+        if not otros:
+            return self.__class__(self.tensor.clone(), title=self.title)
+
+        suma = self.tensor.clone()
+        for nodo in otros:
+            if nodo.tensor.shape != self.tensor.shape:
+                raise ValueError(
+                    f"Shape incompatible: {nodo.tensor.shape} vs {self.tensor.shape}")
+            suma = suma + nodo.tensor
+
+        promedio = suma / (len(otros) + 1)
+        return self.__class__(promedio, title=f"Promedio de {len(otros) + 1} imágenes")
+
     @tag(tipo="transformacion", hace="Clamp al rango [min,max] (por defecto [0,1]).",
          depende_de=("tensor",))
     def clip(self, min: float = 0.0, max: float = 1.0) -> Self:

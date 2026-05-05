@@ -73,6 +73,37 @@ class NoiseVisionNode(SignalVisionNode):
         return self.__class__(resultado,
                               title=f"Sal y Pimienta ({cantidad:.0%}) de {self.title}")
 
+    @tag(tipo="ruido",
+         hace="Ruido aditivo uniforme: cada pixel recibe r ~ U(-amplitud, +amplitud).",
+         depende_de=("tensor",))
+    def ruido_uniforme(self, amplitud: float = 0.1, seed: int | None = None) -> Self:
+        """
+        Ruido aditivo con distribución uniforme:
+            salida = clip(self + r,  [0,1])     con r ~ U(-amplitud, +amplitud)
+
+        A diferencia de sal y pimienta (impulsos a 0 o 1), el ruido uniforme
+        afecta a TODOS los pixeles con perturbaciones pequeñas. En el histograma
+        se ve como un ensanchamiento de los picos del original.
+
+        Args:
+            amplitud: Mitad del rango del ruido (escala 0-1). 0.1 ≈ ±25.5/255.
+            seed:     Semilla opcional para reproducibilidad.
+        """
+        if amplitud < 0:
+            raise ValueError(f"amplitud debe ser ≥ 0, recibido {amplitud}")
+
+        generador = None
+        if seed is not None:
+            generador = torch.Generator(device=self.tensor.device).manual_seed(seed)
+
+        ruido = torch.rand(self.tensor.shape,
+                            device=self.tensor.device, generator=generador)
+        ruido = (ruido * 2 - 1) * amplitud
+        resultado = (self.tensor + ruido).clamp(0.0, 1.0)
+
+        return self.__class__(resultado,
+                              title=f"Ruido uniforme (±{amplitud:.2g}) de {self.title}")
+
 
 # ==========================================
 # Pruebas / Demo
