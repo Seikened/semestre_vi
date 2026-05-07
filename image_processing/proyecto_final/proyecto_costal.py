@@ -201,17 +201,17 @@ def main():
     img_med_boost.title = f"Mediana 3 + High-boost (k={k}) — texto realzado, sin tejido"
     img_med_boost.mostrar(block=False)
 
-    # inspeccionar_patron(img, PARAMS_PICOS_VIS)
+    inspeccionar_patron(img_med_boost, PARAMS_PICOS_VIS)
 
-    # img_limpia, img_notch, _ = filtrar_tejido(img, PARAMS_AGNF, MEDIAN_SIZE)
+    img_limpia, img_notch, _ = filtrar_tejido(img_med_boost, PARAMS_AGNF, MEDIAN_SIZE)
 
-    # log.step("RESULTADO: imagen sin tejido (continua, no binarizada)")
-    # img_limpia.mostrar(block=False)
+    log.step("RESULTADO: imagen sin tejido (continua, no binarizada)")
+    img_limpia.mostrar(block=False)
 
-    # comparar_resultado(img, img_limpia, PARAMS_PICOS_VIS)
+    comparar_resultado(img, img_limpia, PARAMS_PICOS_VIS)
 
-    # if MOSTRAR_BINARIZACION_OPCIONAL:
-    #     vista_opcional_binarizacion(img_limpia, ANCHO_TRAZO_PX, C_BINARIZ)
+    if MOSTRAR_BINARIZACION_OPCIONAL:
+        vista_opcional_binarizacion(img_limpia, ANCHO_TRAZO_PX, C_BINARIZ)
 
     log.info("Cierra las ventanas para finalizar.")
     plt.show()
