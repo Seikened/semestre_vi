@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from colorstreak import Logger as log
 from PIL import Image
 from torchvision.transforms import v2
+from torchvision.utils import save_image
 
 """
 Módulo de Procesamiento de Imágenes
@@ -254,6 +255,60 @@ class VisionNode:
             "Azul": self.__class__(self.tensor[2:3, :, :], title="Canal Azul")
         }
 
+    @tag(tipo="transformacion", hace="Saturación HSV por pixel: 0=gris/desteñido, 1=color puro.",
+         depende_de=("tensor",))
+    def saturacion(self) -> Self:
+        """
+        Croma (componente S del modelo HSV) como nodo de 1 canal en [0,1]:
+            S = (Cmax - Cmin) / Cmax
+
+        Mide qué tan "vivo" es el color: un verde puro da S alto; un blanco o
+        gris (color desteñido) da S ≈ 0, sin importar su brillo. Por eso revela
+        un velo blanquecino sobre una superficie de color aunque el brillo
+        cambie poco — donde el brillo apenas reacciona, la saturación cae.
+        """
+        if self.is_grayscale:
+            raise ValueError("La saturación requiere una imagen RGB.")
+        cmax = self.tensor.amax(dim=0, keepdim=True)
+        cmin = self.tensor.amin(dim=0, keepdim=True)
+        s = (cmax - cmin) / cmax.clamp_min(1e-6)
+        return self.__class__(s, title=f"Saturación de {self.title}")
+
+    @tag(tipo="utilidad", hace="Separa la imagen en sus 3 canales HSV (matiz, saturación, valor).",
+         depende_de=("tensor", "is_grayscale"))
+    def separar_hsv(self) -> dict[str, Self]:
+        """
+        Convierte RGB→HSV y devuelve los 3 canales como nodos de 1 canal en [0,1]:
+            - Matiz (H):      tono, normalizado H/360 (el rojo cae en 0 y en 1).
+            - Saturación (S): croma, (Cmax - Cmin) / Cmax.
+            - Valor (V):      brillo, Cmax.
+
+        Análogo a separar_canales pero en HSV, donde el color (matiz, saturación)
+        queda desacoplado del brillo (valor).
+        """
+        if self.is_grayscale:
+            raise ValueError("No se puede separar HSV de una imagen en blanco y negro.")
+
+        r, g, b = self.tensor[0], self.tensor[1], self.tensor[2]
+        cmax, indice_max = self.tensor.max(dim=0)
+        cmin = self.tensor.amin(dim=0)
+        delta = (cmax - cmin).clamp_min(1e-6)
+
+        sextante = torch.stack([
+            ((g - b) / delta) % 6.0,   # Cmax = R
+            (b - r) / delta + 2.0,     # Cmax = G
+            (r - g) / delta + 4.0,     # Cmax = B
+        ])
+        matiz = torch.gather(sextante, 0, indice_max.unsqueeze(0)).squeeze(0) / 6.0
+        matiz = torch.where(cmax == cmin, torch.zeros_like(matiz), matiz)
+        saturacion = (cmax - cmin) / cmax.clamp_min(1e-6)
+
+        return {
+            "Matiz":      self.__class__(matiz.unsqueeze(0),       title="Matiz (H)"),
+            "Saturación": self.__class__(saturacion.unsqueeze(0),  title="Saturación (S)"),
+            "Valor":      self.__class__(cmax.unsqueeze(0),        title="Valor (V)"),
+        }
+
     @tag(tipo="transformacion", hace="Multiplica por factor con clamp [0,1].", depende_de=("tensor",))
     def ganancia(self, factor: float) -> Self:
         """Aplica un factor de multiplicación al tensor forzando los límites [0, 1]."""
@@ -466,6 +521,15 @@ class VisionNode:
         fig.suptitle(f"Histograma: {self.title}", fontsize=13, weight='bold')
         plt.tight_layout(rect=[0, 0, 1, 0.95])
         plt.show(block=block)
+        return self
+
+    @tag(tipo="utilidad", hace="Guarda el tensor como archivo de imagen (PNG/JPG).",
+         depende_de=("tensor",))
+    def guardar(self, ruta: Path | str) -> Self:
+        """Exporta el tensor [0,1] a disco como imagen. Crea la carpeta si falta."""
+        ruta = Path(ruta)
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        save_image(self.tensor, ruta)
         return self
 
     @tag(tipo="grafica", hace="Grid comparativo: original + canales + B/N.",
