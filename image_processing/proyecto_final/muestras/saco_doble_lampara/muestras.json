@@ -1,0 +1,42 @@
+{
+  "imagen": "saco_doble_lampara.bmp",
+  "ruta_imagen": "/Users/ferleon/Github/PROYECTOS_UNIVERSITARIOS/semestre_vi/image_processing/proyecto_final/saco_doble_lampara.bmp",
+  "tamano_imagen": [
+    2056,
+    2464
+  ],
+  "canales": 3,
+  "fecha_actualizacion": "2026-05-07T11:28:34",
+  "muestras": [
+    {
+      "id": 1,
+      "centro_xy": [
+        1210,
+        455
+      ],
+      "tamano": 256,
+      "etiqueta": "m1",
+      "fecha": "2026-05-07T11:28:17"
+    },
+    {
+      "id": 2,
+      "centro_xy": [
+        829,
+        1180
+      ],
+      "tamano": 256,
+      "etiqueta": "m2",
+      "fecha": "2026-05-07T11:28:20"
+    },
+    {
+      "id": 3,
+      "centro_xy": [
+        1591,
+        1239
+      ],
+      "tamano": 256,
+      "etiqueta": "m3",
+      "fecha": "2026-05-07T11:28:28"
+    }
+  ]
+}

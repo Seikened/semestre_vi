@@ -1,0 +1,26 @@
+{
+  "1": {
+    "deteccion": {
+      "umbral_relativo": 0.08,
+      "min_radio": 11,
+      "distancia_min": 3,
+      "banda_v": 2
+    }
+  },
+  "2": {
+    "deteccion": {
+      "umbral_relativo": 0.08,
+      "min_radio": 11,
+      "distancia_min": 3,
+      "banda_v": 2
+    }
+  },
+  "3": {
+    "deteccion": {
+      "umbral_relativo": 0.08,
+      "min_radio": 11,
+      "distancia_min": 3,
+      "banda_v": 2
+    }
+  }
+}

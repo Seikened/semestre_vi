@@ -15,3 +15,9 @@ venv/
 
 
 .DS_Store
+
+# Muestras del proyecto del costal: versionar solo los JSON (coords + params).
+# Los recortes (.npy cache) y salidas (.bmp) se regeneran desde muestras.json
+# + la imagen original.
+image_processing/proyecto_final/muestras/**/*.npy
+image_processing/proyecto_final/muestras/**/*.bmp
