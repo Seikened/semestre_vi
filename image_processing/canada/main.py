@@ -5,20 +5,19 @@ Idea: el hongo es 'verde desteñido' → cae en saturación. Se segmenta la hoja
 es la baja saturación LOCAL (umbral adaptativo), así el % no baila con la
 iluminación de cada foto.
 
-Uso (estilo demo, ventanas emergentes):
+Uso (descomenta una de las dos llamadas del bloque __main__):
     uv run python image_processing/canada/main.py
-
-Descomenta la HOJA que quieras y ajusta las constantes; vuelve a correr para
-ver el efecto en pantalla. Cada etapa se guarda numerada en out/.
 """
 
 import sys
+import time
 from pathlib import Path
 
 import cv2
 import matplotlib.patches as mpatches
 import matplotlib.pyplot as plt
 import numpy as np
+import polars as pl
 import torch
 from colorstreak import Logger as log
 from matplotlib.widgets import CheckButtons
@@ -31,11 +30,12 @@ from image_processing.ruido import NoiseVisionNode  # noqa: E402
 
 DATA = Path(__file__).parent / "data"
 OUT = Path(__file__).parent / "out"
+OUT_BATCH = OUT / "batch"
 
-# Hoja a procesar (descomenta una):
-#HOJA = DATA / "c59278e0-bd1b-4d15-ac57-fb52e6834ed6.JPG"    # fondo negro
-#HOJA = DATA / "baa0de86-4122-4cb5-aea9-cc36ae6d4026.JPG"  # fondo negro
-HOJA = DATA / "9a595930-349c-4e23-8305-d2c952672d8f.JPG"  # fondo gris + regla
+# Hoja a procesar en modo demo (descomenta una):
+HOJA = DATA / "1.png"
+# HOJA = DATA / "c59278e0-bd1b-4d15-ac57-fb52e6834ed6.JPG"
+# HOJA = DATA / "9a595930-349c-4e23-8305-d2c952672d8f.JPG"
 
 UMBRAL_VERDOR = 0.36   # g = G/(R+G+B); 1/3 es neutro, >0.36 es claramente verde
 UMBRAL_BRILLO = 0.50   # rescata el hongo denso (blanco brillante) como parte de la hoja
@@ -43,6 +43,11 @@ KERNEL_ADAPT = 81      # vecindad del umbral adaptativo del hongo (px, impar)
 C_ADAPT = -0.03        # margen sobre la media local: exige desteñido real
 
 COLOR_INFECCION = (1.0, 0.0, 0.0)
+
+
+def fotos() -> list[Path]:
+    """Rutas a las 47 muestras numeradas en data/ (1.png .. 47.png)."""
+    return [DATA / f"{n}.png" for n in range(1, 48)]
 
 
 def _np(nodo) -> np.ndarray:
@@ -70,6 +75,36 @@ def limpiar_mascara(binaria: np.ndarray) -> np.ndarray:
     return mascara | cv2.bitwise_not(relleno)
 
 
+def procesar_hoja(ruta: Path) -> dict:
+    """Pipeline puro: lee y devuelve máscaras, %, overlay. SIN abrir ventanas."""
+    nodo = NoiseVisionNode.desde_archivo(ruta)
+
+    hsv = nodo.separar_hsv()
+    sat, valor = hsv["Saturación"], hsv["Valor"]
+
+    canales = nodo.separar_canales()
+    suma = canales["Rojo"] + canales["Verde"] + canales["Azul"] + 1e-6
+    verdor = canales["Verde"] / suma
+    es_hoja = (_np(verdor.binarizar(UMBRAL_VERDOR)) > 0.5) | (_np(valor.binarizar(UMBRAL_BRILLO)) > 0.5)
+    mascara = limpiar_mascara(es_hoja.astype("float32"))
+
+    desteñido = sat.negativo().binarizar_adaptativo(KERNEL_ADAPT, C_ADAPT)
+    hongo = (_np(desteñido) > 0.5) & (mascara > 0)
+
+    area_hoja = int((mascara > 0).sum())
+    area_hongo = int(hongo.sum())
+    pct = 100 * area_hongo / area_hoja if area_hoja else 0.0
+
+    rgb = nodo.tensor.permute(1, 2, 0).cpu().numpy()
+    overlay = rgb * (mascara[..., None] > 0)
+    overlay = overlay.copy()
+    overlay[hongo] = COLOR_INFECCION
+
+    return {"nodo": nodo, "sat": sat, "mascara": mascara, "hongo": hongo,
+            "pct": pct, "area_hoja": area_hoja, "area_hongo": area_hongo,
+            "rgb": rgb, "overlay": overlay}
+
+
 def _contador_pasos():
     """Devuelve una función que numera, titula, muestra y guarda cada etapa."""
     n = 0
@@ -87,10 +122,7 @@ def _contador_pasos():
 
 def composicion_capas(rgb: np.ndarray, hoja: np.ndarray, hongo: np.ndarray,
                       pct: float, ruta: Path) -> None:
-    """Vista por capas con leyenda: quita el fondo y marca la infección en rojo.
-
-    Checkboxes para alternar 'Fondo' (mostrar lo que no es hoja) e 'Infección'.
-    """
+    """Vista por capas con leyenda y checkboxes para fondo/infección."""
     estado = {"Fondo": False, "Infección": True}
 
     def componer() -> np.ndarray:
@@ -118,49 +150,75 @@ def composicion_capas(rgb: np.ndarray, hoja: np.ndarray, hongo: np.ndarray,
         fig.canvas.draw_idle()
 
     check.on_clicked(alternar)
-    setattr(fig, "_check_ref", check)   # evita que el GC se lleve el widget
+    setattr(fig, "_check_ref", check)
 
     fig.savefig(ruta, dpi=110, bbox_inches="tight")
     plt.show(block=False)
 
 
 def demo_mildiu(ruta: Path) -> None:
+    """Modo interactivo para UNA hoja: ventanas emergentes + composición + capas."""
     OUT.mkdir(exist_ok=True)
     log.step(f"Hoja: {ruta.name}")
+    r = procesar_hoja(ruta)
     paso = _contador_pasos()
 
-    hoja = NoiseVisionNode.desde_archivo(ruta)
-    paso(hoja, "original")
+    paso(r["nodo"], "original")
+    paso(r["sat"], "saturacion")
+    r["sat"].histograma(block=False)
+    paso(_mascara_a_nodo(r["mascara"], r["nodo"]), "mascara de hoja")
 
-    hsv = hoja.separar_hsv()
-    sat, valor = hsv["Saturación"], hsv["Valor"]
-    paso(sat, "saturacion")
-    sat.histograma(block=False)          # auxiliar: ¿bimodal? hoja sana vs hongo
+    m = torch.from_numpy((r["mascara"] > 0).astype("float32")).unsqueeze(0).to(r["nodo"].tensor.device)
+    paso(NoiseVisionNode(r["nodo"].tensor * m, title="sin fondo"), "hoja sin fondo")
+    paso(_mascara_a_nodo(r["hongo"], r["nodo"]), "hongo detectado")
 
-    canales = hoja.separar_canales()
-    suma = canales["Rojo"] + canales["Verde"] + canales["Azul"] + 1e-6
-    verdor = canales["Verde"] / suma
-    es_hoja = (_np(verdor.binarizar(UMBRAL_VERDOR)) > 0.5) | (_np(valor.binarizar(UMBRAL_BRILLO)) > 0.5)
-    mascara = limpiar_mascara(es_hoja.astype("float32"))
-    paso(_mascara_a_nodo(mascara, hoja), "mascara de hoja")
-
-    m = torch.from_numpy((mascara > 0).astype("float32")).unsqueeze(0).to(hoja.tensor.device)
-    paso(NoiseVisionNode(hoja.tensor * m, title="sin fondo"), "hoja sin fondo")
-
-    desteñido = sat.negativo().binarizar_adaptativo(KERNEL_ADAPT, C_ADAPT)
-    hongo = (_np(desteñido) > 0.5) & (mascara > 0)
-    paso(_mascara_a_nodo(hongo, hoja), "hongo detectado")
-
-    area_hoja = int((mascara > 0).sum())
-    pct = 100 * int(hongo.sum()) / area_hoja if area_hoja else 0.0
-    log.metric(f"% infección ({ruta.name})", f"{pct:.2f}%")
-
-    rgb = hoja.tensor.permute(1, 2, 0).cpu().numpy()
-    composicion_capas(rgb, mascara, hongo, pct, OUT / "6_composicion.png")
-
+    log.metric(f"% infección ({ruta.name})", f"{r['pct']:.2f}%")
+    composicion_capas(r["rgb"], r["mascara"], r["hongo"], r["pct"], OUT / "6_composicion.png")
     log.info("Listo. Cierra las ventanas para terminar.")
     plt.show()
 
 
+def batch_galeria(rutas: list[Path], cols: int = 7) -> None:
+    """Procesa todas las hojas en silencio, escribe CSV + galería de overlays."""
+    OUT_BATCH.mkdir(parents=True, exist_ok=True)
+    log.step(f"Batch sobre {len(rutas)} hojas")
+    inicio = time.perf_counter()
+
+    filas, overlays = [], []
+    for i, ruta in enumerate(rutas, 1):
+        if not ruta.exists():
+            log.warning(f"[{i}/{len(rutas)}] no existe: {ruta.name}")
+            continue
+        r = procesar_hoja(ruta)
+        plt.imsave(OUT_BATCH / f"{ruta.stem}.png", np.clip(r["overlay"], 0, 1))
+        filas.append({"archivo": ruta.name, "pct_infeccion": round(r["pct"], 2),
+                      "area_hoja_px": r["area_hoja"], "area_hongo_px": r["area_hongo"]})
+        overlays.append((ruta.stem, r["overlay"], r["pct"]))
+        log.info(f"[{i}/{len(rutas)}] {ruta.name} → {r['pct']:.2f}%")
+
+    csv_path = OUT / "resumen.csv"
+    df = pl.DataFrame(filas)
+    df.write_csv(csv_path)
+    log.metric("CSV", str(csv_path))
+    log.metric("Promedio %", f"{df['pct_infeccion'].mean():.2f}%")
+    log.metric("Mín/Máx %", f"{df['pct_infeccion'].min():.2f}% / {df['pct_infeccion'].max():.2f}%")
+    log.metric("Tiempo total", f"{time.perf_counter() - inicio:.1f}s")
+
+    filas_grid = (len(overlays) + cols - 1) // cols
+    fig, axes = plt.subplots(filas_grid, cols, figsize=(2 * cols, 2.6 * filas_grid))
+    fig.suptitle(f"Mildiu PM — {len(overlays)} muestras (rojo = infección)", fontsize=13, weight="bold")
+    for ax, (nombre, overlay, pct) in zip(axes.flat, overlays):
+        ax.imshow(np.clip(overlay, 0, 1))
+        ax.set_title(f"{nombre}  {pct:.1f}%", fontsize=9)
+        ax.axis("off")
+    for ax in axes.flat[len(overlays):]:
+        ax.axis("off")
+
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.savefig(OUT / "galeria.png", dpi=110, bbox_inches="tight")
+    plt.show()
+
+
 if __name__ == "__main__":
-    demo_mildiu(HOJA)
+    # demo_mildiu(HOJA)                  # modo: una hoja con ventanas paso a paso
+    batch_galeria(fotos())                # modo: las 47 → CSV + galería

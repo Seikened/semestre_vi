@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mildiu Scan · Canada</title>
+  <meta name="description" content="Cuantificación de mildiu (PM) en hojas de cannabis — tu lote en vivo, cada hoja a un click." />
+  <link rel="stylesheet" href="/web/styles.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar" role="banner">
+    <div class="topbar__inner">
+      <h1 class="topbar__title">Canada<span class="dot-sep">·</span>Mildiu Scan</h1>
+      <div class="topbar__right">
+        <span class="counter" id="counter" aria-live="polite">0 / 47</span>
+        <div class="progress" id="progress" role="progressbar" aria-label="Progreso del lote" aria-valuemin="0" aria-valuemax="47" aria-valuenow="0"></div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container" id="main">
+    <section class="hero" aria-labelledby="hero-eyebrow">
+      <div class="hero__head">
+        <div class="hero__copy">
+          <p class="eyebrow" id="hero-eyebrow">Promedio infección</p>
+          <p class="metric" id="metric">0.0<span class="metric__unit">%</span></p>
+          <p class="meta">
+            <span class="delta" id="delta" data-dir="flat">— vs últimas 5</span>
+            <span class="meta__sep" aria-hidden="true"></span>
+            <span class="range" id="range">rango —</span>
+          </p>
+        </div>
+        <button id="start" class="btn-primary" type="button" aria-label="Procesar 47 muestras">
+          Procesar 47 muestras
+        </button>
+      </div>
+      <div class="hero__chart">
+        <canvas id="chart" aria-label="Distribución de % de infección por muestra" role="img"></canvas>
+      </div>
+      <p class="hero__caption" id="caption" hidden></p>
+    </section>
+
+    <section class="samples" aria-labelledby="samples-h">
+      <div class="samples__head">
+        <h2 id="samples-h">Muestras</h2>
+        <span class="pill" id="pill">
+          <span class="pill__dot" aria-hidden="true"></span>
+          <span class="pill__label">En espera</span>
+        </span>
+      </div>
+      <div class="grid" id="grid" role="list" aria-label="Lote de 47 muestras"></div>
+    </section>
+  </main>
+
+  <dialog class="modal" id="modal" aria-labelledby="modal-title">
+    <article class="sheet">
+      <header class="sheet__head">
+        <h3 id="modal-title" class="sheet__title">Muestra —</h3>
+        <button class="icon-btn" id="close" type="button" aria-label="Cerrar">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+          </svg>
+        </button>
+      </header>
+      <div class="sheet__body">
+        <div class="sheet__media">
+          <div class="media-frame">
+            <img id="modal-img" alt="" />
+          </div>
+          <div class="tabs" role="tablist" id="tabs">
+            <button class="tab is-active" role="tab" data-view="overlay" aria-selected="true">Overlay</button>
+            <button class="tab" role="tab" data-view="rgb" aria-selected="false">Original</button>
+            <button class="tab" role="tab" data-view="mascara" aria-selected="false">Máscara</button>
+            <button class="tab" role="tab" data-view="hongo" aria-selected="false">Hongo</button>
+          </div>
+        </div>
+        <aside class="sheet__stats">
+          <p class="stats__eyebrow">Infección</p>
+          <p class="stats__pct" id="modal-pct">—</p>
+          <dl class="stats__grid">
+            <div>
+              <dt>Área hoja</dt>
+              <dd id="modal-leaf">—</dd>
+            </div>
+            <div>
+              <dt>Área hongo</dt>
+              <dd id="modal-fungus">—</dd>
+            </div>
+            <div>
+              <dt>Archivo</dt>
+              <dd id="modal-file" class="stats__file">—</dd>
+            </div>
+          </dl>
+        </aside>
+      </div>
+    </article>
+  </dialog>
+
+  <template id="card-tpl">
+    <button class="card is-pending" role="listitem" type="button" data-state="pendiente">
+      <span class="card__num"></span>
+      <span class="card__chip" aria-hidden="true"></span>
+      <span class="card__shimmer" aria-hidden="true"></span>
+    </button>
+  </template>
+
+  <script type="module" src="/web/app.js"></script>
+</body>
+</html>
